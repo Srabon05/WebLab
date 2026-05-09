@@ -54,7 +54,7 @@ export function Sidebar({ user, menuItems, activeTab, onTabChange, gradientFrom,
 
   const handleLogout = () => {
     console.log('🔴 Logging out user...');
-    logout();
+    void logout();
     console.log('✅ User logged out, navigating to login page...');
     navigate('/login');
     toast.success('Logged out successfully');
@@ -201,11 +201,7 @@ export function Sidebar({ user, menuItems, activeTab, onTabChange, gradientFrom,
                 <div className="p-2">
                   <button
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      handleViewProfile();
-                    }}
+                    onClick={() => handleViewProfile()}
                     className="w-full flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-blue-50 active:bg-blue-100 rounded-xl transition-all group cursor-pointer"
                   >
                     <div className="w-9 h-9 bg-blue-100 rounded-lg flex items-center justify-center group-hover:scale-110 group-active:scale-95 transition-transform">
@@ -219,11 +215,7 @@ export function Sidebar({ user, menuItems, activeTab, onTabChange, gradientFrom,
 
                   <button
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      handleSettings();
-                    }}
+                    onClick={() => handleSettings()}
                     className="w-full flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-purple-50 active:bg-purple-100 rounded-xl transition-all group cursor-pointer"
                   >
                     <div className="w-9 h-9 bg-purple-100 rounded-lg flex items-center justify-center group-hover:scale-110 group-active:scale-95 transition-transform">
@@ -237,11 +229,7 @@ export function Sidebar({ user, menuItems, activeTab, onTabChange, gradientFrom,
 
                   <button
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      handleHelp();
-                    }}
+                    onClick={() => handleHelp()}
                     className="w-full flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-green-50 active:bg-green-100 rounded-xl transition-all group cursor-pointer"
                   >
                     <div className="w-9 h-9 bg-green-100 rounded-lg flex items-center justify-center group-hover:scale-110 group-active:scale-95 transition-transform">
@@ -257,9 +245,7 @@ export function Sidebar({ user, menuItems, activeTab, onTabChange, gradientFrom,
 
                   <button
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
+                    onClick={() => {
                       setShowProfileDropdown(false);
                       handleLogout();
                     }}

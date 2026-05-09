@@ -52,38 +52,37 @@ export function Register() {
     if (!validateForm()) return;
 
     setIsLoading(true);
-
-    // Simulate async registration
-    setTimeout(() => {
-      const user = register(
+    try {
+      const user = await register(
         formData.email,
         formData.name,
         formData.role as UserRole,
         formData.phone,
-        formData.address
+        formData.address,
+        formData.password
       );
 
       setIsLoading(false);
-
-      if (user) {
-        switch (user.role) {
-          case 'admin':
-            navigate('/admin');
-            break;
-          case 'recycling_center':
-            navigate('/recycling-center');
-            break;
-          case 'collector':
-            navigate('/collector');
-            break;
-          case 'user':
-            navigate('/user');
-            break;
-          default:
-            navigate('/');
-        }
+      switch (user.role) {
+        case "admin":
+          navigate("/admin");
+          break;
+        case "recycling_center":
+          navigate("/recycling-center");
+          break;
+        case "collector":
+          navigate("/collector");
+          break;
+        case "user":
+          navigate("/user");
+          break;
+        default:
+          navigate("/");
       }
-    }, 1000);
+    } catch {
+      setIsLoading(false);
+      setErrors((prev) => ({ ...prev, email: "Registration failed. Try a different email." }));
+    }
   };
 
   const roleOptions = [

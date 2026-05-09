@@ -13,16 +13,8 @@ import {
 import EmojiPicker, { EmojiClickData } from "emoji-picker-react";
 import { formatDistanceToNow } from "date-fns";
 import { getCurrentUser, logout } from "../lib/auth";
+import { apiRequest } from "../lib/api";
 import { 
-  mockCollectionRequests, 
-  mockCampaigns,
-  mockConversations,
-  mockChatMessages,
-  mockEWasteCategories,
-  mockRewardTransactions,
-  mockRewardRedemptions,
-  mockUserRewardProfile,
-  mockLeaderboard,
   getCategoryLabel,
   getStatusColor,
   getTierColor,
@@ -67,37 +59,100 @@ export function UserDashboard() {
     notes: '',
   });
 
+  // Backend data
+  const [collectionRequests, setCollectionRequests] = useState<any[]>([]);
+  const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
+  const [rewardTransactions, setRewardTransactions] = useState<any[]>([]);
+  const [rewardRedemptions, setRewardRedemptions] = useState<any[]>([]);
+  const [rewardProfile, setRewardProfile] = useState<any | null>(null);
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);
+
   // Filter requests for this user - compute before early return
-  const myRequests = mockCollectionRequests.filter(r => r.userId === user?.id);
+  const myRequests = collectionRequests.filter(r => r.userId === user?.id);
   const activeRequests = myRequests.filter(r => 
     r.status === 'pending' || r.status === 'assigned' || r.status === 'in_progress'
   );
   const completedRequests = myRequests.filter(r => r.status === 'completed');
 
   // Calculate reward points
-  const totalRewardPoints = mockUserRewardProfile.totalPoints;
+  const totalRewardPoints = rewardProfile?.totalPoints ?? 0;
   const pendingPoints = activeRequests.reduce((sum, r) => sum + (r.rewardPoints || 0), 0);
 
   // User campaigns
-  const userCampaigns = mockCampaigns.filter(
+  const userCampaigns = campaigns.filter(
     c => c.active && (c.targetAudience === 'all' || c.targetAudience === 'users')
   );
 
   // User conversations
-  const userConversations = mockConversations.filter(
+  const userConversations = conversations.filter(
     c => c.participants.some(p => p.id === user?.id && p.role === 'user')
   );
   const totalUnreadMessages = userConversations.reduce((sum, conv) => sum + conv.unreadCount, 0);
 
   // Define these before useEffect hooks to avoid initialization errors
-  const selectedReq = mockCollectionRequests.find(r => r.id === selectedRequest);
+  const selectedReq = collectionRequests.find(r => r.id === selectedRequest);
   const selectedConv = userConversations.find(c => c.id === selectedConversation);
-  const conversationMessages = mockChatMessages.filter(m => m.conversationId === selectedConversation);
+  const conversationMessages = chatMessages.filter(m => m.conversationId === selectedConversation);
 
   // Auto-scroll to bottom of messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [conversationMessages.length]);
+
+  // Load backend data for this user
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        const [
+          myReqs,
+          allCampaigns,
+          allConversations,
+          allCategories,
+          myTransactions,
+          allRedemptions,
+          myProfile,
+          allLeaderboard,
+        ] = await Promise.all([
+          apiRequest("/collection-requests/mine/"),
+          apiRequest("/campaigns/"),
+          apiRequest("/conversations/"),
+          apiRequest("/categories/"),
+          apiRequest("/reward-transactions/mine/"),
+          apiRequest("/reward-redemptions/"),
+          apiRequest("/reward-profile/mine/"),
+          apiRequest("/leaderboard/"),
+        ]);
+
+        setCollectionRequests(myReqs as any[]);
+        setCampaigns(allCampaigns as any[]);
+        setConversations(allConversations as any[]);
+        setCategories(allCategories as any[]);
+        setRewardTransactions(myTransactions as any[]);
+        setRewardRedemptions(allRedemptions as any[]);
+        setRewardProfile(myProfile as any);
+        setLeaderboard(allLeaderboard as any[]);
+      } catch {
+        // keep UI usable even if backend is down
+      }
+    })();
+  }, [user?.id]);
+
+  // Load messages for selected conversation
+  useEffect(() => {
+    if (!selectedConversation) return;
+    (async () => {
+      try {
+        const msgs = await apiRequest(`/chat-messages/?conversationId=${selectedConversation}`);
+        setChatMessages(msgs as any[]);
+      } catch {
+        setChatMessages([]);
+      }
+    })();
+  }, [selectedConversation]);
 
   // Recording timer
   useEffect(() => {
@@ -170,21 +225,55 @@ export function UserDashboard() {
     "Can we reschedule?",
   ];
 
-  const handleSubmitRequest = (e: React.FormEvent) => {
+  const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    toast.success('Pickup request submitted successfully!', {
-      description: 'Your request has been sent to the recycling center. They will assign a collector soon.'
-    });
-    setNewRequest({
-      category: 'computers',
-      items: '',
-      quantity: 1,
-      estimatedWeight: '',
-      scheduledDate: '',
-      scheduledTime: '',
-      notes: '',
-    });
-    setActiveTab('dashboard');
+    try {
+      await apiRequest("/collection-requests/", {
+        method: "POST",
+        body: JSON.stringify({
+          userName: user?.name || "User",
+          userPhone: (user as any)?.phone || "",
+          userAddress: (user as any)?.address || "",
+          category: newRequest.category,
+          items: newRequest.items,
+          quantity: newRequest.quantity,
+          estimatedWeight: newRequest.estimatedWeight || null,
+          scheduledDate: newRequest.scheduledDate || null,
+          scheduledTime: newRequest.scheduledTime || null,
+          notes: newRequest.notes || null,
+          status: "pending",
+          createdAt: new Date().toISOString(),
+          trackingHistory: [
+            {
+              status: "pending",
+              timestamp: new Date().toISOString(),
+              message: "Request submitted successfully",
+            },
+          ],
+        }),
+      });
+
+      const myReqs = await apiRequest("/collection-requests/mine/");
+      setCollectionRequests(myReqs as any[]);
+
+      toast.success("Pickup request submitted successfully!", {
+        description: "Your request is saved in the database.",
+      });
+      setNewRequest({
+        category: "computers",
+        items: "",
+        quantity: 1,
+        estimatedWeight: "",
+        scheduledDate: "",
+        scheduledTime: "",
+        notes: "",
+      });
+      setActiveTab("dashboard");
+    } catch {
+      toast.error("Failed to submit request", {
+        description: "Backend error. Please try again.",
+      });
+    }
   };
 
   const handleTrackRequest = (requestId: string) => {
@@ -545,7 +634,7 @@ export function UserDashboard() {
                             className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all font-medium"
                             required
                           >
-                            {mockEWasteCategories.map(cat => (
+                            {categories.map((cat: any) => (
                               <option key={cat.id} value={cat.id}>{cat.label}</option>
                             ))}
                           </select>
@@ -748,23 +837,25 @@ export function UserDashboard() {
                         <Trophy className="size-12" />
                         <div>
                           <p className="text-purple-200 text-sm">Your Tier</p>
-                          <p className="text-2xl font-bold">{getTierIcon(mockUserRewardProfile.tier)} {mockUserRewardProfile.tier.toUpperCase()}</p>
+                          <p className="text-2xl font-bold">
+                            {getTierIcon(rewardProfile?.tier || "bronze")} {(rewardProfile?.tier || "bronze").toUpperCase()}
+                          </p>
                         </div>
                       </div>
 
                       <div className="space-y-4">
                         <div>
                           <p className="text-purple-200 text-sm mb-2">Available Points</p>
-                          <p className="text-5xl font-bold">{mockUserRewardProfile.totalPoints}</p>
+                          <p className="text-5xl font-bold">{rewardProfile?.totalPoints ?? 0}</p>
                         </div>
                         <div className="pt-4 border-t border-purple-400/30">
                           <div className="flex justify-between text-sm mb-2">
                             <span className="text-purple-200">Lifetime Earned</span>
-                            <span className="font-bold">{mockUserRewardProfile.lifetimePoints}</span>
+                            <span className="font-bold">{rewardProfile?.lifetimePoints ?? 0}</span>
                           </div>
                           <div className="flex justify-between text-sm">
                             <span className="text-purple-200">Total Redeemed</span>
-                            <span className="font-bold">{mockUserRewardProfile.redeemedPoints}</span>
+                            <span className="font-bold">{rewardProfile?.redeemedPoints ?? 0}</span>
                           </div>
                         </div>
                       </div>
@@ -777,7 +868,7 @@ export function UserDashboard() {
                         Leaderboard
                       </h4>
                       <div className="space-y-2">
-                        {mockLeaderboard.slice(0, 5).map((entry) => (
+                        {leaderboard.slice(0, 5).map((entry: any) => (
                           <div
                             key={entry.rank}
                             className={`flex items-center justify-between p-3 rounded-xl ${
@@ -801,7 +892,7 @@ export function UserDashboard() {
                   <div className="lg:col-span-2">
                     <h3 className="text-2xl font-bold text-gray-900 mb-6">Redeem Your Points</h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {mockRewardRedemptions.map((reward) => (
+                      {rewardRedemptions.map((reward: any) => (
                         <div
                           key={reward.id}
                           className="bg-white rounded-2xl border-2 border-gray-100 p-6 hover:border-purple-300 hover:shadow-lg transition-all group"
@@ -815,14 +906,14 @@ export function UserDashboard() {
                           <h4 className="font-bold text-gray-900 mb-2">{reward.name}</h4>
                           <p className="text-sm text-gray-600 mb-4">{reward.description}</p>
                           <button
-                            disabled={mockUserRewardProfile.totalPoints < reward.pointsRequired}
+                            disabled={(rewardProfile?.totalPoints ?? 0) < reward.pointsRequired}
                             className={`w-full py-3 rounded-xl font-medium transition-all ${
-                              mockUserRewardProfile.totalPoints >= reward.pointsRequired
+                              (rewardProfile?.totalPoints ?? 0) >= reward.pointsRequired
                                 ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white hover:shadow-lg hover:scale-105'
                                 : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                             }`}
                           >
-                            {mockUserRewardProfile.totalPoints >= reward.pointsRequired ? 'Redeem Now' : 'Not Enough Points'}
+                            {(rewardProfile?.totalPoints ?? 0) >= reward.pointsRequired ? 'Redeem Now' : 'Not Enough Points'}
                           </button>
                         </div>
                       ))}
@@ -832,7 +923,7 @@ export function UserDashboard() {
                     <div className="mt-8">
                       <h3 className="text-2xl font-bold text-gray-900 mb-6">Recent Transactions</h3>
                       <div className="space-y-3">
-                        {mockRewardTransactions.slice(0, 5).map((transaction) => (
+                        {rewardTransactions.slice(0, 5).map((transaction: any) => (
                           <div key={transaction.id} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between">
                             <div className="flex items-center gap-4">
                               <div className={`w-10 h-10 rounded-full flex items-center justify-center ${

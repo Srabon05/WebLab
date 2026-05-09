@@ -14,34 +14,30 @@ export function Login() {
     e.preventDefault();
     setError("");
     setIsLoading(true);
-
-    // Simulate async login
-    setTimeout(() => {
-      const user = login(email, password);
+    try {
+      const user = await login(email, password);
       setIsLoading(false);
-      
-      if (user) {
-        // Navigate based on role
-        switch (user.role) {
-          case 'admin':
-            navigate('/admin');
-            break;
-          case 'recycling_center':
-            navigate('/recycling-center');
-            break;
-          case 'collector':
-            navigate('/collector');
-            break;
-          case 'user':
-            navigate('/user');
-            break;
-          default:
-            navigate('/');
-        }
-      } else {
-        setError("Invalid email or password");
+
+      switch (user.role) {
+        case "admin":
+          navigate("/admin");
+          break;
+        case "recycling_center":
+          navigate("/recycling-center");
+          break;
+        case "collector":
+          navigate("/collector");
+          break;
+        case "user":
+          navigate("/user");
+          break;
+        default:
+          navigate("/");
       }
-    }, 800);
+    } catch (err) {
+      setIsLoading(false);
+      setError("Invalid email or password");
+    }
   };
 
   const quickLogins = [

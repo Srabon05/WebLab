@@ -17,13 +17,10 @@ const TakaIcon = ({ className = "size-5" }: { className?: string }) => (
   <span className={`font-bold ${className}`} style={{ fontFamily: 'Arial, sans-serif' }}>৳</span>
 );
 import { getCurrentUser, logout } from "../lib/auth";
+import { apiRequest } from "../lib/api";
 import { WithdrawModal } from "./WithdrawModal";
 import { DumpingConfirmationModal } from "./DumpingConfirmationModal";
 import { 
-  mockCollectionRequests, 
-  mockCollectors,
-  mockConversations,
-  mockChatMessages,
   getCategoryLabel,
   getStatusColor,
   CollectionRequest,
@@ -80,7 +77,40 @@ export function CollectorDashboard() {
   const imageInputRef = useRef<HTMLInputElement>(null);
   
   // State for managing collection requests - MUST BE BEFORE EARLY RETURN
-  const [collectionRequests, setCollectionRequests] = useState(mockCollectionRequests);
+  const [collectionRequests, setCollectionRequests] = useState<any[]>([]);
+  const [collectors, setCollectors] = useState<any[]>([]);
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        const [reqs, cols, convs] = await Promise.all([
+          apiRequest("/collection-requests/"),
+          apiRequest("/collectors/"),
+          apiRequest("/conversations/"),
+        ]);
+        setCollectionRequests(reqs as any[]);
+        setCollectors(cols as any[]);
+        setConversations(convs as any[]);
+      } catch {
+        // ignore
+      }
+    })();
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!selectedConversation) return;
+    (async () => {
+      try {
+        const msgs = await apiRequest(`/chat-messages/?conversationId=${selectedConversation}`);
+        setChatMessages(msgs as any[]);
+      } catch {
+        setChatMessages([]);
+      }
+    })();
+  }, [selectedConversation]);
   
   // Quick replies
   const quickReplies = [
@@ -117,7 +147,7 @@ export function CollectorDashboard() {
   }
 
   // Get collector data
-  const collector = mockCollectors.find(c => c.email === user.email) || mockCollectors[0];
+  const collector = collectors.find(c => c.email === user.email) || collectors[0];
   
   // Filter collections for this collector
   const myCollections = collectionRequests.filter(
@@ -137,14 +167,14 @@ export function CollectorDashboard() {
   );
 
   // User conversations
-  const collectorConversations = mockConversations.filter(
+  const collectorConversations = conversations.filter(
     c => c.participants.some(p => p.id === collector.id && p.role === 'collector')
   );
   const totalUnreadMessages = collectorConversations.reduce((sum, conv) => sum + conv.unreadCount, 0);
 
   const selectedReq = collectionRequests.find(r => r.id === selectedRequest);
   const selectedConv = collectorConversations.find(c => c.id === selectedConversation);
-  const conversationMessages = mockChatMessages.filter(m => m.conversationId === selectedConversation);
+  const conversationMessages = chatMessages.filter(m => m.conversationId === selectedConversation);
   
   // Scroll to bottom of messages
   useEffect(() => {
@@ -152,7 +182,7 @@ export function CollectorDashboard() {
   }, [conversationMessages, selectedConversation]);
 
   const handleLogout = () => {
-    logout();
+    void logout();
     navigate('/');
   };
   
@@ -172,6 +202,23 @@ export function CollectorDashboard() {
   };
 
   const handleAcceptRequest = (requestId: string) => {
+    (async () => {
+      try {
+        await apiRequest(`/collection-requests/${requestId}/`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            collectorId: collector.id,
+            status: "assigned",
+            assignedAt: new Date().toISOString(),
+          }),
+        });
+        const reqs = await apiRequest("/collection-requests/");
+        setCollectionRequests(reqs as any[]);
+      } catch {
+        // ignore
+      }
+    })();
+
     setCollectionRequests(prevRequests => 
       prevRequests.map(request => 
         request.id === requestId 
@@ -189,6 +236,19 @@ export function CollectorDashboard() {
   };
 
   const handleStartPickup = (requestId: string) => {
+    (async () => {
+      try {
+        await apiRequest(`/collection-requests/${requestId}/`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "in_progress" }),
+        });
+        const reqs = await apiRequest("/collection-requests/");
+        setCollectionRequests(reqs as any[]);
+      } catch {
+        // ignore
+      }
+    })();
+
     setCollectionRequests(prevRequests => 
       prevRequests.map(request => 
         request.id === requestId 
@@ -210,6 +270,20 @@ export function CollectorDashboard() {
 
   const handleSendOTP = (requestId: string) => {
     const generatedOTP = Math.floor(100000 + Math.random() * 900000).toString();
+    (async () => {
+      try {
+        await apiRequest(`/collection-requests/${requestId}/`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            pickupOTP: generatedOTP,
+          }),
+        });
+        const reqs = await apiRequest("/collection-requests/");
+        setCollectionRequests(reqs as any[]);
+      } catch {
+        // ignore
+      }
+    })();
     toast.success('OTP sent to user!', {
       description: `Verification code ${generatedOTP} has been sent to the user's device.`
     });
@@ -219,6 +293,22 @@ export function CollectorDashboard() {
 
   const handleVerifyOTP = () => {
     if (otp.length === 6) {
+      (async () => {
+        try {
+          await apiRequest(`/collection-requests/${selectedRequest}/`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              status: "completed",
+              completedAt: new Date().toISOString(),
+              otpVerifiedAt: new Date().toISOString(),
+            }),
+          });
+          const reqs = await apiRequest("/collection-requests/");
+          setCollectionRequests(reqs as any[]);
+        } catch {
+          // ignore
+        }
+      })();
       // Mark request as completed
       setCollectionRequests(prevRequests =>
         prevRequests.map(request =>

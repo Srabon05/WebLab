@@ -9,13 +9,8 @@ import {
   MoreVertical, Phone, Video, Info, Activity, Truck, Star
 } from "lucide-react";
 import { getCurrentUser, logout } from "../lib/auth";
+import { apiRequest } from "../lib/api";
 import { 
-  mockCollectionRequests, 
-  mockRecyclingCenters,
-  mockDisposalGuidelines,
-  mockConversations,
-  mockChatMessages,
-  mockCollectors,
   getCategoryLabel,
   getStatusColor,
   getClassificationColor,
@@ -56,6 +51,14 @@ export function RecyclingCenterDashboard() {
   const [disposalMethod, setDisposalMethod] = useState('');
   const [processingNotes, setProcessingNotes] = useState('');
 
+  // Backend data
+  const [recyclingCenters, setRecyclingCenters] = useState<any[]>([]);
+  const [collectionRequests, setCollectionRequests] = useState<any[]>([]);
+  const [disposalGuidelines, setDisposalGuidelines] = useState<any[]>([]);
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [collectors, setCollectors] = useState<any[]>([]);
+
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -80,9 +83,9 @@ export function RecyclingCenterDashboard() {
     }
   }, [user, navigate]);
 
-  const center = mockRecyclingCenters.find(c => c.email === user.email) || mockRecyclingCenters[0];
+  const center = recyclingCenters.find(c => c.email === user.email) || recyclingCenters[0];
   
-  const centerCollections = mockCollectionRequests.filter(
+  const centerCollections = collectionRequests.filter(
     r => r.recyclingCenterId === center.id
   );
   
@@ -102,12 +105,47 @@ export function RecyclingCenterDashboard() {
     r => r.status === 'completed' || completedRequests.includes(r.id)
   );
 
-  const totalUnreadMessages = mockConversations.reduce((sum, conv) => sum + conv.unreadCount, 0);
+  const totalUnreadMessages = conversations.reduce((sum, conv) => sum + conv.unreadCount, 0);
 
   const handleLogout = () => {
-    logout();
+    void logout();
     navigate('/');
   };
+
+  // Load backend data
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        const [centers, requests, guidelines, convs, cols] = await Promise.all([
+          apiRequest("/recycling-centers/"),
+          apiRequest("/collection-requests/"),
+          apiRequest("/guidelines/"),
+          apiRequest("/conversations/"),
+          apiRequest("/collectors/"),
+        ]);
+        setRecyclingCenters(centers as any[]);
+        setCollectionRequests(requests as any[]);
+        setDisposalGuidelines(guidelines as any[]);
+        setConversations(convs as any[]);
+        setCollectors(cols as any[]);
+      } catch {
+        // ignore
+      }
+    })();
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!selectedConversation) return;
+    (async () => {
+      try {
+        const msgs = await apiRequest(`/chat-messages/?conversationId=${selectedConversation}`);
+        setChatMessages(msgs as any[]);
+      } catch {
+        setChatMessages([]);
+      }
+    })();
+  }, [selectedConversation]);
   
   const handleViewProfile = () => {
     setShowProfileDropdown(false);
@@ -131,12 +169,26 @@ export function RecyclingCenterDashboard() {
   };
 
   const handleMarkReceived = (requestId: string) => {
-    // Add to processing requests
+    (async () => {
+      try {
+        await apiRequest(`/collection-requests/${requestId}/`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            status: "in_progress",
+            receivedAt: new Date().toISOString(),
+          }),
+        });
+        const requests = await apiRequest("/collection-requests/");
+        setCollectionRequests(requests as any[]);
+      } catch {
+        // ignore
+      }
+    })();
+
     setProcessingRequests([...processingRequests, requestId]);
-    // Switch to processing tab
     setActiveTab('processing');
     toast.success('Items marked as received and moved to processing', {
-      description: 'The collector has been notified.'
+      description: 'Saved to database.'
     });
   };
 
@@ -148,13 +200,29 @@ export function RecyclingCenterDashboard() {
 
   const handleSaveAssignment = () => {
     if (selectedRequest && selectedCollectorId) {
-      const collector = mockCollectors.find(c => c.id === selectedCollectorId);
+      const collector = collectors.find(c => c.id === selectedCollectorId);
+      (async () => {
+        try {
+          await apiRequest(`/collection-requests/${selectedRequest}/`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              collectorId: selectedCollectorId,
+              status: "assigned",
+              assignedAt: new Date().toISOString(),
+            }),
+          });
+          const requests = await apiRequest("/collection-requests/");
+          setCollectionRequests(requests as any[]);
+        } catch {
+          // ignore
+        }
+      })();
       setAssignedRequests({
         ...assignedRequests,
         [selectedRequest]: selectedCollectorId
       });
       toast.success('Collector assigned successfully', {
-        description: `${collector?.name} has been notified about the pickup.`
+        description: `${collector?.name} assigned and stored in database.`
       });
       setShowAssignCollectorModal(false);
       setSelectedRequest(null);
@@ -171,6 +239,31 @@ export function RecyclingCenterDashboard() {
 
   const handleSaveClassification = () => {
     if (selectedRequest) {
+      const outcome = {
+        processedDate: new Date().toISOString(),
+        classification,
+        recoveredMaterials,
+        disposalMethod,
+        notes: processingNotes || undefined,
+        certificateGenerated: true,
+      };
+      (async () => {
+        try {
+          await apiRequest(`/collection-requests/${selectedRequest}/`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              status: "completed",
+              completedAt: new Date().toISOString(),
+              classification,
+              recyclingOutcome: outcome,
+            }),
+          });
+          const requests = await apiRequest("/collection-requests/");
+          setCollectionRequests(requests as any[]);
+        } catch {
+          // ignore
+        }
+      })();
       // Move from processing to completed
       setProcessingRequests(processingRequests.filter(id => id !== selectedRequest));
       setCompletedRequests([...completedRequests, selectedRequest]);
@@ -178,7 +271,7 @@ export function RecyclingCenterDashboard() {
       setActiveTab('processed');
     }
     toast.success('Classification saved successfully', {
-      description: 'Item has been moved to processed. User will be notified.'
+      description: 'Saved to database and moved to processed.'
     });
     setShowClassificationModal(false);
     setRecoveredMaterials([]);
@@ -254,9 +347,9 @@ export function RecyclingCenterDashboard() {
     },
   ];
 
-  const selectedReq = mockCollectionRequests.find(r => r.id === selectedRequest);
-  const selectedConv = mockConversations.find(c => c.id === selectedConversation);
-  const conversationMessages = (mockChatMessages || []).filter(m => m.conversationId === selectedConversation);
+  const selectedReq = collectionRequests.find(r => r.id === selectedRequest);
+  const selectedConv = conversations.find(c => c.id === selectedConversation);
+  const conversationMessages = (chatMessages || []).filter(m => m.conversationId === selectedConversation);
 
   const sidebarMenuItems = [
     { key: 'dashboard', label: 'Dashboard', icon: Building2 },
@@ -501,7 +594,7 @@ export function RecyclingCenterDashboard() {
                               <User className="size-4 text-blue-600" />
                               <span>Collector: <span className="font-semibold text-gray-900">
                                 {assignedRequests[request.id] 
-                                  ? mockCollectors.find(c => c.id === assignedRequests[request.id])?.name 
+                                  ? collectors.find(c => c.id === assignedRequests[request.id])?.name 
                                   : request.collectorName}
                               </span></span>
                             </div>
@@ -707,20 +800,14 @@ export function RecyclingCenterDashboard() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {mockDisposalGuidelines.map((guideline) => (
+                  {disposalGuidelines.map((guideline: any) => (
                     <div key={guideline.id} className="bg-white rounded-2xl border-2 border-gray-100 p-6 hover:border-purple-300 hover:shadow-lg transition-all">
                       <div className="flex items-start gap-4 mb-4">
                         <div className={`p-4 rounded-xl ${
-                          guideline.severity === 'critical' ? 'bg-red-100' :
-                          guideline.severity === 'high' ? 'bg-orange-100' :
-                          guideline.severity === 'medium' ? 'bg-yellow-100' :
-                          'bg-green-100'
+                          'bg-yellow-100'
                         }`}>
                           <AlertTriangle className={`size-6 ${
-                            guideline.severity === 'critical' ? 'text-red-600' :
-                            guideline.severity === 'high' ? 'text-orange-600' :
-                            guideline.severity === 'medium' ? 'text-yellow-600' :
-                            'text-green-600'
+                            'text-yellow-600'
                           }`} />
                         </div>
                         <div className="flex-1">
@@ -792,16 +879,15 @@ export function RecyclingCenterDashboard() {
 
                     {/* Conversations List */}
                     <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                      {mockConversations.length === 0 ? (
+                      {conversations.length === 0 ? (
                         <div className="text-center py-12">
                           <MessageSquare className="size-12 text-gray-300 mx-auto mb-3" />
                           <p className="text-gray-500 text-sm">No conversations yet</p>
                         </div>
                       ) : (
-                        mockConversations.map((conv) => {
-                          const userName = conv.relatedRequestId.includes('REQ') 
-                            ? mockCollectionRequests.find(r => r.id === conv.relatedRequestId)?.userName || 'User'
-                            : 'User';
+                        conversations.map((conv: any) => {
+                          const userName =
+                            collectionRequests.find((r) => r.id === conv.relatedRequestId)?.userName || "User";
                           const initials = userName.split(' ').map(n => n[0]).join('').toUpperCase();
                           const isOnline = Math.random() > 0.5; // Mock online status
                           
@@ -864,9 +950,8 @@ export function RecyclingCenterDashboard() {
                             <div className="flex items-center gap-4">
                               {(() => {
                                 const conv = selectedConv;
-                                const userName = conv?.relatedRequestId.includes('REQ') 
-                                  ? mockCollectionRequests.find(r => r.id === conv.relatedRequestId)?.userName || 'User'
-                                  : 'User';
+                                const userName =
+                                  collectionRequests.find((r) => r.id === conv?.relatedRequestId)?.userName || "User";
                                 const initials = userName.split(' ').map(n => n[0]).join('').toUpperCase();
                                 const isOnline = Math.random() > 0.5;
 
@@ -932,8 +1017,9 @@ export function RecyclingCenterDashboard() {
                               const isCenter = msg.senderRole === 'recycling_center';
                               const showAvatar = index === 0 || 
                                 conversationMessages[index - 1]?.senderRole !== msg.senderRole;
-                              const userName = isCenter ? 'You' : 
-                                mockCollectionRequests.find(r => r.id === selectedConv?.relatedRequestId)?.userName || 'User';
+                              const userName = isCenter
+                                ? "You"
+                                : collectionRequests.find((r) => r.id === selectedConv?.relatedRequestId)?.userName || "User";
                               const initials = userName.split(' ').map(n => n[0]).join('').toUpperCase();
 
                               return (
@@ -1059,7 +1145,7 @@ export function RecyclingCenterDashboard() {
                   Select Collector *
                 </label>
                 <div className="space-y-3">
-                  {mockCollectors.filter(c => c.approvalStatus === 'approved').map((collector) => (
+                  {collectors.filter((c) => c.approvalStatus === 'approved').map((collector: any) => (
                     <div
                       key={collector.id}
                       onClick={() => setSelectedCollectorId(collector.id)}

@@ -2,8 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { User, Mail, Phone, MapPin, Edit2, Save, X, Shield, Key, Smartphone, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
-import { getCurrentUser } from '../lib/auth';
-
+import { getCurrentUser, logout } from '../lib/auth';
 export function Profile() {
   const navigate = useNavigate();
   const user = getCurrentUser();
@@ -34,6 +33,12 @@ export function Profile() {
     });
   };
 
+  const handleLogout = () => {
+    void logout();
+    toast.success('Logged out successfully');
+    navigate('/login');
+  };
+
   const handleCancel = () => {
     setIsEditing(false);
     setFormData({
@@ -47,14 +52,23 @@ export function Profile() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-6">
       <div className="max-w-4xl mx-auto">
-        {/* Back Button */}
-        <button
-          onClick={() => navigate(-1)}
-          className="mb-6 flex items-center gap-2 px-4 py-2 bg-white rounded-xl hover:bg-gray-50 transition-all shadow-sm"
-        >
-          <ArrowLeft className="size-5" />
-          <span className="font-medium">Back</span>
-        </button>
+        {/* Action Buttons Header */}
+        <div className="flex justify-between items-center mb-6">
+          <button
+            onClick={() => navigate(-1)}
+            className="flex items-center gap-2 px-4 py-2 bg-white rounded-xl hover:bg-gray-50 transition-all shadow-sm"
+          >
+            <ArrowLeft className="size-5" />
+            <span className="font-medium">Back</span>
+          </button>
+          
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-all shadow-sm font-medium"
+          >
+            <span className="font-medium">Logout</span>
+          </button>
+        </div>
 
         {/* Profile Header */}
         <div className={`bg-gradient-to-r ${getRoleColor(user?.role)} rounded-3xl p-8 mb-6 shadow-xl text-white relative overflow-hidden`}>

@@ -13,19 +13,8 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer 
 } from 'recharts';
 import { getCurrentUser, logout } from "../lib/auth";
+import { apiRequest } from "../lib/api";
 import { 
-  mockCollectionRequests, 
-  mockRecyclingCenters, 
-  mockCollectors,
-  mockPendingUsers,
-  mockPendingCenters,
-  mockPendingCollectors,
-  mockEWasteCategories,
-  mockRewardRules,
-  mockCampaigns,
-  mockMonthlyStats,
-  mockCategoryStats,
-  mockAllUsers,
   getCategoryLabel,
   getStatusColor,
   EWasteCategoryConfig,
@@ -63,7 +52,7 @@ export function AdminDashboard() {
   const [deletingCategory, setDeletingCategory] = useState<{ id: string; name: string } | null>(null);
   
   // State for user management
-  const [allUsers, setAllUsers] = useState(mockAllUsers);
+  const [allUsers, setAllUsers] = useState<AllUser[]>([]);
   const [editingUser, setEditingUser] = useState<AllUser | null>(null);
   const [showUserModal, setShowUserModal] = useState(false);
   const [deletingUser, setDeletingUser] = useState<{ id: string; name: string } | null>(null);
@@ -74,21 +63,82 @@ export function AdminDashboard() {
   });
 
   // State for pending approvals
-  const [pendingUsers, setPendingUsers] = useState(mockPendingUsers);
-  const [pendingCenters, setPendingCenters] = useState(mockPendingCenters);
-  const [pendingCollectors, setPendingCollectors] = useState(mockPendingCollectors);
+  const [pendingUsers, setPendingUsers] = useState<any[]>([]);
+  const [pendingCenters, setPendingCenters] = useState<any[]>([]);
+  const [pendingCollectors, setPendingCollectors] = useState<any[]>([]);
   
   // State for approval filter
   const [approvalFilter, setApprovalFilter] = useState<'users' | 'recycling_collectors'>('users');
 
   // State for categories
-  const [categories, setCategories] = useState(mockEWasteCategories);
+  const [categories, setCategories] = useState<any[]>([]);
   
   // State for reward rules
-  const [rewardRules, setRewardRules] = useState(mockRewardRules);
+  const [rewardRules, setRewardRules] = useState<any[]>([]);
+  const [showRewardModal, setShowRewardModal] = useState(false);
+  const [editingRewardRule, setEditingRewardRule] = useState<any | null>(null);
+  const [rewardForm, setRewardForm] = useState({
+    name: '',
+    condition: '',
+    category: '',
+    multiplier: 1,
+    bonusPoints: 0,
+  });
   
   // State for campaigns
-  const [campaigns, setCampaigns] = useState(mockCampaigns);
+  const [campaigns, setCampaigns] = useState<any[]>([]);
+
+  const [collectionRequests, setCollectionRequests] = useState<any[]>([]);
+  const [recyclingCenters, setRecyclingCenters] = useState<any[]>([]);
+  const [collectors, setCollectors] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        const [users, reqs, centers, cols, cats, rules, camps] = await Promise.all([
+          apiRequest("/users/"),
+          apiRequest("/collection-requests/"),
+          apiRequest("/recycling-centers/"),
+          apiRequest("/collectors/"),
+          apiRequest("/categories/"),
+          apiRequest("/reward-rules/"),
+          apiRequest("/campaigns/"),
+        ]);
+
+        const userList = users as any[];
+        setAllUsers(
+          userList
+            .filter((u) => u.role === "user")
+            .map((u) => ({
+              id: String(u.id),
+              name: u.name,
+              email: u.email,
+              phone: u.phone || "",
+              address: u.address || "",
+              role: "user" as const,
+              joinedAt: u.date_joined,
+              totalCollections: u.total_collections ?? 0,
+              totalPoints: u.total_points ?? 0,
+              status: (u.status || "active") as any,
+              lastActive: u.last_active || u.date_joined,
+            }))
+        );
+
+        setPendingUsers(userList.filter((u) => u.role !== "admin" && u.approval_status === "pending"));
+        setCollectionRequests(reqs as any[]);
+        setRecyclingCenters(centers as any[]);
+        setCollectors(cols as any[]);
+        setPendingCenters((centers as any[]).filter((c) => c.approval_status === "pending" || c.approvalStatus === "pending"));
+        setPendingCollectors((cols as any[]).filter((c) => c.approval_status === "pending" || c.approvalStatus === "pending"));
+        setCategories(cats as any[]);
+        setRewardRules(rules as any[]);
+        setCampaigns(camps as any[]);
+      } catch {
+        // ignore
+      }
+    })();
+  }, [user?.id]);
 
   // Check authentication with useEffect to avoid setState during render
   useEffect(() => {
@@ -98,43 +148,61 @@ export function AdminDashboard() {
   }, [user, navigate]);
 
   const handleApprove = (type: 'user' | 'center' | 'collector', id: string, name: string) => {
-    if (type === 'user') {
-      setPendingUsers(prev => prev.map(u => 
-        u.id === id ? { ...u, approvalStatus: 'approved' as const, approvedAt: new Date().toISOString() } : u
-      ));
-    } else if (type === 'center') {
-      setPendingCenters(prev => prev.map(c => 
-        c.id === id ? { ...c, approvalStatus: 'approved' as const, status: 'active' as const, approvedAt: new Date().toISOString() } : c
-      ));
-    } else if (type === 'collector') {
-      setPendingCollectors(prev => prev.map(c => 
-        c.id === id ? { ...c, approvalStatus: 'approved' as const, status: 'available' as const, approvedAt: new Date().toISOString() } : c
-      ));
-    }
-    
-    toast.success(`${name} has been approved!`, {
-      description: 'User has been notified via email.'
-    });
+    (async () => {
+      try {
+        if (type === 'user') {
+          await apiRequest(`/users/${id}/`, { method: "PATCH", body: JSON.stringify({ approval_status: 'approved' }) });
+          setPendingUsers(prev => prev.map(u => 
+            u.id === id ? { ...u, approvalStatus: 'approved' as const, approvedAt: new Date().toISOString() } : u
+          ));
+        } else if (type === 'center') {
+          await apiRequest(`/recycling-centers/${id}/`, { method: "PATCH", body: JSON.stringify({ approval_status: 'approved', status: 'active' }) });
+          setPendingCenters(prev => prev.map(c => 
+            c.id === id ? { ...c, approvalStatus: 'approved' as const, status: 'active' as const, approvedAt: new Date().toISOString() } : c
+          ));
+        } else if (type === 'collector') {
+          await apiRequest(`/collectors/${id}/`, { method: "PATCH", body: JSON.stringify({ approval_status: 'approved', status: 'available' }) });
+          setPendingCollectors(prev => prev.map(c => 
+            c.id === id ? { ...c, approvalStatus: 'approved' as const, status: 'available' as const, approvedAt: new Date().toISOString() } : c
+          ));
+        }
+        
+        toast.success(`${name} has been approved!`, {
+          description: 'User has been notified via email.'
+        });
+      } catch {
+        toast.error('Failed to approve', { description: 'Backend error' });
+      }
+    })();
   };
 
   const handleReject = (type: 'user' | 'center' | 'collector', id: string, name: string) => {
-    if (type === 'user') {
-      setPendingUsers(prev => prev.map(u => 
-        u.id === id ? { ...u, approvalStatus: 'rejected' as const, approvedAt: new Date().toISOString() } : u
-      ));
-    } else if (type === 'center') {
-      setPendingCenters(prev => prev.map(c => 
-        c.id === id ? { ...c, approvalStatus: 'rejected' as const, approvedAt: new Date().toISOString() } : c
-      ));
-    } else if (type === 'collector') {
-      setPendingCollectors(prev => prev.map(c => 
-        c.id === id ? { ...c, approvalStatus: 'rejected' as const, approvedAt: new Date().toISOString() } : c
-      ));
-    }
-    
-    toast.error(`${name} has been rejected.`, {
-      description: 'User has been notified.'
-    });
+    (async () => {
+      try {
+        if (type === 'user') {
+          await apiRequest(`/users/${id}/`, { method: "PATCH", body: JSON.stringify({ approval_status: 'rejected' }) });
+          setPendingUsers(prev => prev.map(u => 
+            u.id === id ? { ...u, approvalStatus: 'rejected' as const, approvedAt: new Date().toISOString() } : u
+          ));
+        } else if (type === 'center') {
+          await apiRequest(`/recycling-centers/${id}/`, { method: "PATCH", body: JSON.stringify({ approval_status: 'rejected' }) });
+          setPendingCenters(prev => prev.map(c => 
+            c.id === id ? { ...c, approvalStatus: 'rejected' as const, approvedAt: new Date().toISOString() } : c
+          ));
+        } else if (type === 'collector') {
+          await apiRequest(`/collectors/${id}/`, { method: "PATCH", body: JSON.stringify({ approval_status: 'rejected' }) });
+          setPendingCollectors(prev => prev.map(c => 
+            c.id === id ? { ...c, approvalStatus: 'rejected' as const, approvedAt: new Date().toISOString() } : c
+          ));
+        }
+        
+        toast.error(`${name} has been rejected.`, {
+          description: 'User has been notified.'
+        });
+      } catch {
+        toast.error('Failed to reject', { description: 'Backend error' });
+      }
+    })();
   };
 
   // Category Management
@@ -164,12 +232,23 @@ export function AdminDashboard() {
 
   const confirmDeleteCategory = () => {
     if (!deletingCategory) return;
-    
-    setCategories(prev => prev.filter(c => c.id !== deletingCategory.id));
-    toast.success(`${deletingCategory.name} has been deleted`, {
-      description: 'Category has been permanently removed from the system.'
-    });
-    setDeletingCategory(null);
+    (async () => {
+      try {
+        const found = (categories as any[]).find((c) => c.id === deletingCategory.id);
+        const dbId = found?.dbId;
+        if (dbId) {
+          await apiRequest(`/categories/${dbId}/`, { method: "DELETE" });
+        }
+        setCategories((prev: any) => prev.filter((c: any) => c.id !== deletingCategory.id));
+        toast.success(`${deletingCategory.name} has been deleted`, {
+          description: "Deleted from database.",
+        });
+      } catch {
+        toast.error("Failed to delete category", { description: "Backend error." });
+      } finally {
+        setDeletingCategory(null);
+      }
+    })();
   };
 
   const cancelDeleteCategory = () => {
@@ -184,44 +263,55 @@ export function AdminDashboard() {
       return;
     }
 
-    if (editingCategory) {
-      // Update existing category
-      const updatedCategory: EWasteCategoryConfig = {
-        ...editingCategory,
-        label: categoryForm.label,
-        description: categoryForm.description,
-        rewardPoints: categoryForm.rewardPoints,
-      };
-      
-      setCategories(prev => prev.map(c => 
-        c.id === updatedCategory.id ? updatedCategory : c
-      ));
-      toast.success('Category updated successfully!', {
-        description: `${categoryForm.label} has been updated.`
-      });
-    } else {
-      // Create new category
-      const newCategory: EWasteCategoryConfig = {
-        id: `${categoryForm.label.toLowerCase().replace(/\s+/g, '_')}`,
-        label: categoryForm.label,
-        description: categoryForm.description,
-        rewardPoints: categoryForm.rewardPoints,
-        active: true,
-      };
-      
-      setCategories(prev => [...prev, newCategory]);
-      toast.success('Category created successfully!', {
-        description: `${categoryForm.label} is now available.`
-      });
-    }
+    (async () => {
+      try {
+        if (editingCategory) {
+          const dbId = (editingCategory as any).dbId;
+          const updated = await apiRequest(`/categories/${dbId}/`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              label: categoryForm.label,
+              description: categoryForm.description,
+              rewardPoints: categoryForm.rewardPoints,
+            }),
+          });
+          const next = categories.map((c: any) => (c.dbId === dbId ? updated : c));
+          setCategories(next as any);
+          toast.success("Category updated successfully!", {
+            description: `${categoryForm.label} has been updated in the database.`,
+          });
+        } else {
+          const slug = `${categoryForm.label.toLowerCase().replace(/\s+/g, "_")}`;
+          const created = await apiRequest("/categories/", {
+            method: "POST",
+            body: JSON.stringify({
+              id: slug,
+              label: categoryForm.label,
+              description: categoryForm.description,
+              rewardPoints: categoryForm.rewardPoints,
+              pickupCharge: 0,
+              active: true,
+            }),
+          });
+          setCategories((prev: any) => [...prev, created]);
+          toast.success("Category created successfully!", {
+            description: `${categoryForm.label} saved to the database.`,
+          });
+        }
+      } catch (err: any) {
+        toast.error("Failed to save category", { description: err.message });
+        return;
+      } finally {
+        setShowCategoryModal(false);
+        setEditingCategory(null);
+        setCategoryForm({
+          label: "",
+          description: "",
+          rewardPoints: 50,
+        });
+      }
+    })();
     
-    setShowCategoryModal(false);
-    setEditingCategory(null);
-    setCategoryForm({
-      label: '',
-      description: '',
-      rewardPoints: 50,
-    });
   };
 
   // User Management
@@ -242,11 +332,19 @@ export function AdminDashboard() {
   const confirmDeleteUser = () => {
     if (!deletingUser) return;
     
-    setAllUsers(prev => prev.filter(u => u.id !== deletingUser.id));
-    toast.success(`${deletingUser.name} has been deleted`, {
-      description: 'User has been permanently removed from the system.'
-    });
-    setDeletingUser(null);
+    (async () => {
+      try {
+        await apiRequest(`/users/${deletingUser.id}/`, { method: "DELETE" });
+        setAllUsers(prev => prev.filter(u => u.id !== deletingUser.id));
+        toast.success(`${deletingUser.name} has been deleted`, {
+          description: 'User has been permanently removed from the system.'
+        });
+      } catch {
+        toast.error("Failed to delete user", { description: "Backend error." });
+      } finally {
+        setDeletingUser(null);
+      }
+    })();
   };
 
   const cancelDeleteUser = () => {
@@ -262,43 +360,125 @@ export function AdminDashboard() {
     }
 
     if (editingUser) {
-      // Update existing user
-      const updatedUser: AllUser = {
-        ...editingUser,
-        name: userForm.name,
-        email: userForm.email,
-        role: userForm.role,
-      };
-      
-      setAllUsers(prev => prev.map(u => 
-        u.id === updatedUser.id ? updatedUser : u
-      ));
-      toast.success('User updated successfully!', {
-        description: `${userForm.name} has been updated.`
-      });
+      (async () => {
+        try {
+          await apiRequest(`/users/${editingUser.id}/`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              name: userForm.name,
+              email: userForm.email,
+              role: userForm.role,
+            })
+          });
+          
+          const updatedUser: AllUser = {
+            ...editingUser,
+            name: userForm.name,
+            email: userForm.email,
+            role: userForm.role,
+          };
+          
+          setAllUsers(prev => prev.map(u => 
+            u.id === updatedUser.id ? updatedUser : u
+          ));
+          toast.success('User updated successfully!', {
+            description: `${userForm.name} has been updated.`
+          });
+        } catch {
+          toast.error("Failed to update user", { description: "Backend error." });
+        } finally {
+          setShowUserModal(false);
+          setEditingUser(null);
+          setUserForm({
+            name: '',
+            email: '',
+            role: 'user',
+          });
+        }
+      })();
+    } else {
+      setShowUserModal(false);
     }
-    
-    setShowUserModal(false);
-    setEditingUser(null);
-    setUserForm({
-      name: '',
-      email: '',
-      role: 'user',
-    });
   };
 
   // Reward Rules Management
   const handleDeleteRewardRule = (ruleId: string, ruleName: string) => {
-    setRewardRules(prev => prev.filter(r => r.id !== ruleId));
-    toast.success(`Reward rule "${ruleName}" deleted`, {
-      description: 'Rule has been removed from the system.'
-    });
+    (async () => {
+      try {
+        await apiRequest(`/reward-rules/${ruleId}/`, { method: "DELETE" });
+        setRewardRules(prev => prev.filter(r => r.id !== ruleId));
+        toast.success(`Reward rule "${ruleName}" deleted`, {
+          description: 'Rule has been removed from the system.'
+        });
+      } catch {
+        toast.error("Failed to delete reward rule", { description: "Backend error." });
+      }
+    })();
   };
 
-  const handleEditRewardRule = (ruleId: string) => {
-    toast.info('Edit reward rule', {
-      description: 'Reward rule editor coming soon!'
+  const handleAddRewardRule = () => {
+    setEditingRewardRule(null);
+    setRewardForm({ name: '', condition: '', category: 'all', multiplier: 1, bonusPoints: 0 });
+    setShowRewardModal(true);
+  };
+
+  const handleEditRewardRule = (rule: any) => {
+    setEditingRewardRule(rule);
+    setRewardForm({
+      name: rule.name,
+      condition: rule.condition,
+      category: rule.category,
+      multiplier: rule.multiplier,
+      bonusPoints: rule.bonus_points || rule.bonusPoints || 0,
     });
+    setShowRewardModal(true);
+  };
+
+  const handleSaveRewardForm = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rewardForm.name || !rewardForm.condition) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    (async () => {
+      try {
+        if (editingRewardRule) {
+          const updated = await apiRequest(`/reward-rules/${editingRewardRule.id}/`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              name: rewardForm.name,
+              condition: rewardForm.condition,
+              category: rewardForm.category,
+              multiplier: rewardForm.multiplier,
+              bonusPoints: rewardForm.bonusPoints,
+              pointsPerKg: 0,
+            }),
+          });
+          setRewardRules(prev => prev.map(r => r.id === editingRewardRule.id ? updated : r));
+          toast.success("Reward rule updated!");
+        } else {
+          const created = await apiRequest("/reward-rules/", {
+            method: "POST",
+            body: JSON.stringify({
+              name: rewardForm.name,
+              condition: rewardForm.condition,
+              category: rewardForm.category,
+              multiplier: rewardForm.multiplier,
+              bonusPoints: rewardForm.bonusPoints,
+              pointsPerKg: 0,
+            }),
+          });
+          setRewardRules(prev => [...prev, created]);
+          toast.success("Reward rule created!");
+        }
+      } catch {
+        toast.error("Failed to save reward rule", { description: "Backend error." });
+      } finally {
+        setShowRewardModal(false);
+        setEditingRewardRule(null);
+      }
+    })();
   };
 
   // Campaign Management
@@ -310,65 +490,122 @@ export function AdminDashboard() {
       return;
     }
 
-    const campaign: Campaign = {
-      id: `C${String(campaigns.length + 1).padStart(3, '0')}`,
-      title: newCampaign.title,
-      message: newCampaign.message,
-      type: newCampaign.type,
-      targetAudience: newCampaign.targetAudience,
-      createdAt: new Date().toISOString(),
-      active: true,
-    };
-
-    setCampaigns(prev => [campaign, ...prev]);
-    toast.success('Campaign created successfully!', {
-      description: `Sent to ${newCampaign.targetAudience === 'all' ? 'all users' : newCampaign.targetAudience}`
-    });
-    
-    setShowCampaignModal(false);
-    setNewCampaign({
-      title: '',
-      message: '',
-      type: 'awareness',
-      targetAudience: 'all',
-    });
+    (async () => {
+      try {
+        const created = await apiRequest("/campaigns/", {
+          method: "POST",
+          body: JSON.stringify({
+            title: newCampaign.title,
+            message: newCampaign.message,
+            type: newCampaign.type,
+            targetAudience: newCampaign.targetAudience,
+            createdAt: new Date().toISOString(),
+            active: true,
+          }),
+        });
+        setCampaigns((prev: any) => [created, ...prev]);
+        toast.success("Campaign created successfully!", {
+          description: "Saved to database and broadcast list updated.",
+        });
+        setShowCampaignModal(false);
+        setNewCampaign({
+          title: "",
+          message: "",
+          type: "awareness",
+          targetAudience: "all",
+        });
+      } catch (err: any) {
+        toast.error("Failed to create campaign", { description: err.message });
+      }
+    })();
   };
 
   const handleToggleCampaign = (campaignId: string, currentStatus: boolean) => {
-    setCampaigns(prev => prev.map(c => 
-      c.id === campaignId ? { ...c, active: !currentStatus } : c
-    ));
-    toast.success(currentStatus ? 'Campaign deactivated' : 'Campaign activated');
+    (async () => {
+      try {
+        const updated = await apiRequest(`/campaigns/${campaignId}/`, {
+          method: "PATCH",
+          body: JSON.stringify({ active: !currentStatus }),
+        });
+        setCampaigns((prev: any) => prev.map((c: any) => (c.id === campaignId ? updated : c)));
+        toast.success(currentStatus ? "Campaign deactivated" : "Campaign activated");
+      } catch {
+        toast.error("Failed to update campaign", { description: "Backend error." });
+      }
+    })();
   };
 
   const handleDeleteCampaign = (campaignId: string, campaignTitle: string) => {
-    setCampaigns(prev => prev.filter(c => c.id !== campaignId));
-    toast.success(`Campaign "${campaignTitle}" deleted`);
+    (async () => {
+      try {
+        await apiRequest(`/campaigns/${campaignId}/`, { method: "DELETE" });
+        setCampaigns((prev: any) => prev.filter((c: any) => c.id !== campaignId));
+        toast.success(`Campaign "${campaignTitle}" deleted`);
+      } catch {
+        toast.error("Failed to delete campaign", { description: "Backend error." });
+      }
+    })();
   };
 
   const handleGenerateReport = () => {
-    toast.success('Generating monthly report...', {
-      description: 'Download will start shortly.'
-    });
+    toast.success('Generating report...', { description: 'Download will start shortly.' });
     
-    // Simulate report generation
-    setTimeout(() => {
-      toast.success('Report generated successfully!', {
-        description: 'Check your downloads folder.'
-      });
-    }, 2000);
+    // Generate CSV for collections
+    let csv = "ID,User,Category,Weight(kg),Status,Date\n";
+    collectionRequests.forEach((r: any) => {
+      csv += `${r.id},${r.user_name || r.user || ''},${r.category || ''},${r.weight || 0},${r.status || ''},${r.created_at || r.createdAt || ''}\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `collections_report_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    toast.success('Report downloaded successfully!');
   };
 
-  const pendingApprovals = 
-    pendingUsers.filter(u => u.approvalStatus === 'pending').length +
-    pendingCenters.filter(c => c.approvalStatus === 'pending').length +
-    pendingCollectors.filter(c => c.approvalStatus === 'pending').length;
+  const pendingApprovals =
+    pendingUsers.filter((u) => (u.approvalStatus || u.approval_status) === "pending").length +
+    pendingCenters.filter((c) => (c.approvalStatus || c.approval_status) === "pending").length +
+    pendingCollectors.filter((c) => (c.approvalStatus || c.approval_status) === "pending").length;
+
+  const monthlyStats = (() => {
+    const byMonth = new Map<string, { month: string; collections: number; weight: number }>();
+    for (const r of collectionRequests) {
+      const d = new Date(r.createdAt || r.created_at || Date.now());
+      const month = d.toLocaleString("en-US", { month: "short" });
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      const entry = byMonth.get(key) || { month, collections: 0, weight: 0 };
+      entry.collections += 1;
+      entry.weight += Number(r.weight || 0);
+      byMonth.set(key, entry);
+    }
+    return Array.from(byMonth.values()).slice(-6);
+  })();
+
+  const categoryStats = (() => {
+    const palette = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444'];
+    const counts = new Map<string, number>();
+    for (const r of collectionRequests) {
+      const label = getCategoryLabel(r.category);
+      counts.set(label, (counts.get(label) || 0) + 1);
+    }
+    return Array.from(counts.entries()).map(([category, value], idx) => ({
+      category,
+      value,
+      color: palette[idx % palette.length],
+    }));
+  })();
 
   const stats = [
     {
       icon: FileText,
       label: 'Total Collections',
-      value: mockCollectionRequests.length.toString(),
+      value: collectionRequests.length.toString(),
       change: '+12%',
       color: 'from-blue-500 to-blue-600',
       bgLight: 'bg-blue-50',
@@ -386,7 +623,7 @@ export function AdminDashboard() {
     {
       icon: Building2,
       label: 'Active Centers',
-      value: mockRecyclingCenters.filter(c => c.status === 'active').length.toString(),
+      value: recyclingCenters.filter((c) => c.status === 'active').length.toString(),
       change: '+3',
       color: 'from-green-500 to-emerald-600',
       bgLight: 'bg-green-50',
@@ -539,7 +776,7 @@ export function AdminDashboard() {
                     <div className="bg-gradient-to-br from-white to-blue-50 rounded-2xl p-6 border-2 border-gray-100">
                       <h4 className="font-bold text-gray-900 mb-4">Monthly Collections</h4>
                       <ResponsiveContainer width="100%" height={300}>
-                        <LineChart data={mockMonthlyStats} id="monthly-collections-line-chart">
+                        <LineChart data={monthlyStats} id="monthly-collections-line-chart">
                           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                           <XAxis dataKey="month" stroke="#6b7280" />
                           <YAxis stroke="#6b7280" />
@@ -570,7 +807,7 @@ export function AdminDashboard() {
                       <ResponsiveContainer width="100%" height={300}>
                         <PieChart id="category-distribution-pie-chart">
                           <Pie
-                            data={mockCategoryStats}
+                            data={categoryStats}
                             cx="50%"
                             cy="50%"
                             labelLine={false}
@@ -580,8 +817,8 @@ export function AdminDashboard() {
                             dataKey="value"
                             nameKey="category"
                           >
-                            {mockCategoryStats.map((entry, index) => (
-                              <Cell key={`category-cell-${entry.category}-${index}`} fill={COLORS[index % COLORS.length]} />
+                            {categoryStats.map((entry: any, index: number) => (
+                              <Cell key={`category-cell-${entry.category}-${index}`} fill={entry.color} />
                             ))}
                           </Pie>
                           <Tooltip />
@@ -594,7 +831,7 @@ export function AdminDashboard() {
                   <div className="bg-white rounded-2xl p-6 border-2 border-gray-100">
                     <h4 className="font-bold text-gray-900 mb-4">Recent Collections</h4>
                     <div className="space-y-3">
-                      {mockCollectionRequests.slice(0, 5).map((request) => (
+                      {collectionRequests.slice(0, 5).map((request: any) => (
                         <div key={request.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors">
                           <div className="flex items-center gap-4">
                             <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
@@ -973,12 +1210,18 @@ export function AdminDashboard() {
             {/* Rewards Tab */}
             {activeTab === 'rewards' && (
               <div className="animate-slide-in-up">
-                <div className="text-center mb-8">
-                  <div className="w-16 h-16 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <Award className="size-8 text-white" />
+                <div className="flex items-center justify-between mb-8">
+                  <div>
+                    <h3 className="text-3xl font-bold text-gray-900 mb-2">Reward Rules</h3>
+                    <p className="text-gray-600">Configure point multipliers and bonuses</p>
                   </div>
-                  <h3 className="text-3xl font-bold text-gray-900 mb-2">Reward Rules</h3>
-                  <p className="text-gray-600">Configure point multipliers and bonuses</p>
+                  <button
+                    onClick={handleAddRewardRule}
+                    className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl hover:shadow-lg hover:scale-105 active:scale-95 transition-all font-medium"
+                  >
+                    <Plus className="size-5" />
+                    Add Reward Rule
+                  </button>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -1009,7 +1252,7 @@ export function AdminDashboard() {
 
                       <div className="flex gap-2">
                         <button
-                          onClick={() => handleEditRewardRule(rule.id)}
+                          onClick={() => handleEditRewardRule(rule)}
                           className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-xl hover:bg-purple-200 transition-colors font-medium"
                         >
                           <Edit className="size-4" />
@@ -1050,7 +1293,7 @@ export function AdminDashboard() {
                   <div className="bg-white rounded-2xl border-2 border-gray-100 p-6">
                     <h4 className="font-bold text-gray-900 mb-4">Collections Overview</h4>
                     <ResponsiveContainer width="100%" height={250}>
-                      <BarChart data={mockMonthlyStats} id="collections-overview-chart">
+                      <BarChart data={monthlyStats} id="collections-overview-chart">
                         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                         <XAxis dataKey="month" stroke="#6b7280" />
                         <YAxis stroke="#6b7280" />
@@ -1064,7 +1307,7 @@ export function AdminDashboard() {
                   <div className="bg-white rounded-2xl border-2 border-gray-100 p-6">
                     <h4 className="font-bold text-gray-900 mb-4">Weight Collected (kg)</h4>
                     <ResponsiveContainer width="100%" height={250}>
-                      <BarChart data={mockMonthlyStats} id="weight-report-chart">
+                      <BarChart data={monthlyStats} id="weight-report-chart">
                         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                         <XAxis dataKey="month" stroke="#6b7280" />
                         <YAxis stroke="#6b7280" />
@@ -1484,6 +1727,93 @@ export function AdminDashboard() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reward Rule Modal */}
+      {showRewardModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl animate-scale-in">
+            <div className="sticky top-0 bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-6 rounded-t-3xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-2xl font-bold mb-1">
+                    {editingRewardRule ? 'Edit Reward Rule' : 'Create Reward Rule'}
+                  </h3>
+                  <p className="text-purple-100">
+                    {editingRewardRule ? 'Update rule details' : 'Add a new reward multiplier'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowRewardModal(false)}
+                  className="w-10 h-10 bg-white/20 hover:bg-white/30 rounded-full flex items-center justify-center transition-colors"
+                >
+                  <X className="size-6" />
+                </button>
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveRewardForm} className="p-6 space-y-6">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Rule Name *</label>
+                <input
+                  type="text"
+                  value={rewardForm.name}
+                  onChange={(e) => setRewardForm({ ...rewardForm, name: e.target.value })}
+                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Condition *</label>
+                <input
+                  type="text"
+                  value={rewardForm.condition}
+                  onChange={(e) => setRewardForm({ ...rewardForm, condition: e.target.value })}
+                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all"
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Multiplier *</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={rewardForm.multiplier}
+                    onChange={(e) => setRewardForm({ ...rewardForm, multiplier: parseFloat(e.target.value) || 1 })}
+                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Bonus Points</label>
+                  <input
+                    type="number"
+                    value={rewardForm.bonusPoints}
+                    onChange={(e) => setRewardForm({ ...rewardForm, bonusPoints: parseInt(e.target.value) || 0 })}
+                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-4 pt-4">
+                <button
+                  type="submit"
+                  className="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 text-white py-4 rounded-xl hover:shadow-xl hover:scale-105 transition-all font-bold"
+                >
+                  Save Rule
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowRewardModal(false)}
+                  className="px-8 py-4 border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-all font-bold"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

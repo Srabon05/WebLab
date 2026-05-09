@@ -6,23 +6,46 @@ import {
   Mail, Phone, MapPin, MessageSquare, Info, Award
 } from "lucide-react";
 import { 
-  mockCollectionRequests, 
-  mockRecyclingCenters, 
-  mockCollectors,
-  mockCampaigns,
-  mockEWasteCategories,
   getCategoryLabel,
   getStatusColor
 } from "../lib/data";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { apiRequest } from "../lib/api";
 
 export function GuestView() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'overview' | 'categories' | 'awareness' | 'contact'>('overview');
 
-  const totalCollections = mockCollectionRequests.length;
-  const completedCollections = mockCollectionRequests.filter(r => r.status === 'completed').length;
-  const activeCollections = mockCollectionRequests.filter(
+  const [collectionRequests, setCollectionRequests] = useState<any[]>([]);
+  const [recyclingCenters, setRecyclingCenters] = useState<any[]>([]);
+  const [collectors, setCollectors] = useState<any[]>([]);
+  const [campaignsData, setCampaignsData] = useState<any[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [reqs, centers, cols, camps, cats] = await Promise.all([
+          apiRequest("/collection-requests/"),
+          apiRequest("/recycling-centers/"),
+          apiRequest("/collectors/"),
+          apiRequest("/campaigns/"),
+          apiRequest("/categories/"),
+        ]);
+        setCollectionRequests(reqs as any[]);
+        setRecyclingCenters(centers as any[]);
+        setCollectors(cols as any[]);
+        setCampaignsData(camps as any[]);
+        setCategories(cats as any[]);
+      } catch {
+        // ignore
+      }
+    })();
+  }, []);
+
+  const totalCollections = collectionRequests.length;
+  const completedCollections = collectionRequests.filter(r => r.status === 'completed').length;
+  const activeCollections = collectionRequests.filter(
     r => r.status === 'pending' || r.status === 'assigned' || r.status === 'in_progress'
   ).length;
 
@@ -48,7 +71,7 @@ export function GuestView() {
     {
       icon: Building2,
       label: 'Recycling Centers',
-      value: mockRecyclingCenters.length.toString(),
+      value: recyclingCenters.length.toString(),
       color: 'bg-purple-500',
     },
   ];
@@ -112,7 +135,7 @@ export function GuestView() {
     },
   ];
 
-  const campaigns = mockCampaigns.filter(
+  const campaigns = campaignsData.filter(
     c => c.active && (c.targetAudience === 'all' || c.targetAudience === 'users')
   );
 
@@ -223,7 +246,7 @@ export function GuestView() {
                       <h2 className="text-xl font-semibold text-gray-900">Recent Collections</h2>
                     </div>
                     <div className="space-y-3">
-                      {mockCollectionRequests.slice(0, 5).map((request) => (
+                      {collectionRequests.slice(0, 5).map((request: any) => (
                         <div key={request.id} className="border border-gray-200 rounded-lg p-3">
                           <div className="flex items-center justify-between mb-2">
                             <span className="font-medium text-gray-900">{request.id}</span>
@@ -247,7 +270,7 @@ export function GuestView() {
                       <h2 className="text-xl font-semibold text-gray-900">Recycling Centers</h2>
                     </div>
                     <div className="space-y-3">
-                      {mockRecyclingCenters.map((center) => (
+                      {recyclingCenters.map((center: any) => (
                         <div key={center.id} className="border border-gray-200 rounded-lg p-3">
                           <div className="flex items-start justify-between mb-2">
                             <div>
@@ -275,7 +298,7 @@ export function GuestView() {
                     <h2 className="text-xl font-semibold text-gray-900">Active Collectors</h2>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {mockCollectors.map((collector) => (
+                    {collectors.map((collector: any) => (
                       <div key={collector.id} className="border border-gray-200 rounded-lg p-4">
                         <div className="flex items-start justify-between mb-3">
                           <div>
@@ -321,7 +344,7 @@ export function GuestView() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {mockEWasteCategories.map((category) => {
+                  {categories.map((category: any) => {
                     const IconComponent = categoryIcons[category.id] || Package;
                     return (
                       <div key={category.id} className="border-2 border-gray-200 rounded-lg p-6 hover:border-green-500 transition-colors">

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Settings as SettingsIcon, Moon, Sun, Monitor, Globe, Bell, BellOff, Mail, MessageSquare, Volume2, VolumeX, Eye, EyeOff, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
+import { logout } from '../lib/auth';
 
 export function Settings() {
   const navigate = useNavigate();
@@ -32,17 +33,32 @@ export function Settings() {
     });
   };
 
+  const handleLogout = () => {
+    void logout();
+    toast.success('Logged out successfully');
+    navigate('/login');
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-6">
       <div className="max-w-4xl mx-auto">
-        {/* Back Button */}
-        <button
-          onClick={() => navigate(-1)}
-          className="mb-6 flex items-center gap-2 px-4 py-2 bg-white rounded-xl hover:bg-gray-50 transition-all shadow-sm"
-        >
-          <ArrowLeft className="size-5" />
-          <span className="font-medium">Back</span>
-        </button>
+        {/* Action Buttons Header */}
+        <div className="flex justify-between items-center mb-6">
+          <button
+            onClick={() => navigate(-1)}
+            className="flex items-center gap-2 px-4 py-2 bg-white rounded-xl hover:bg-gray-50 transition-all shadow-sm"
+          >
+            <ArrowLeft className="size-5" />
+            <span className="font-medium">Back</span>
+          </button>
+          
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-all shadow-sm font-medium"
+          >
+            <span className="font-medium">Logout</span>
+          </button>
+        </div>
 
         {/* Header */}
         <div className="bg-gradient-to-r from-purple-600 to-pink-600 rounded-3xl p-8 mb-6 shadow-xl text-white relative overflow-hidden">
