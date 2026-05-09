@@ -53,7 +53,7 @@ export function Register() {
 
     setIsLoading(true);
     try {
-      const user = await register(
+      const response = await register(
         formData.email,
         formData.name,
         formData.role as UserRole,
@@ -63,7 +63,14 @@ export function Register() {
       );
 
       setIsLoading(false);
-      switch (user.role) {
+      
+      if (response.user.approval_status === "pending") {
+        alert("Registration successful. Please wait for admin approval.");
+        navigate("/login");
+        return;
+      }
+      
+      switch (response.user.role) {
         case "admin":
           navigate("/admin");
           break;

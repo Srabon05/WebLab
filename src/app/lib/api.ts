@@ -71,18 +71,21 @@ export async function registerRequest(payload: {
   address?: string;
 }) {
   const data = await apiRequest<{
-    access: string;
-    refresh: string;
+    access?: string;
+    refresh?: string;
     user: any;
+    message?: string;
   }>("/auth/register/", {
     method: "POST",
     auth: false,
     body: JSON.stringify(payload),
   });
 
-  setTokens(data.access, data.refresh);
-  localStorage.setItem("currentUser", JSON.stringify(data.user));
-  return data.user;
+  if (data.access && data.refresh) {
+    setTokens(data.access, data.refresh);
+    localStorage.setItem("currentUser", JSON.stringify(data.user));
+  }
+  return data;
 }
 
 export async function logoutRequest() {

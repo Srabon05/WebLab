@@ -29,17 +29,21 @@ export const register = async (
   phone?: string,
   address?: string,
   password?: string
-): Promise<User> => {
-  const user = (await registerRequest({
+): Promise<{ user: User; message?: string }> => {
+  const data = await registerRequest({
     email,
     password: password || "password123",
     name,
     role,
     phone,
     address,
-  })) as User;
-  currentUser = user;
-  return user;
+  });
+  
+  if (data.user && data.user.approval_status !== "pending") {
+    currentUser = data.user as User;
+  }
+  
+  return { user: data.user as User, message: data.message };
 };
 
 export const logout = async () => {

@@ -52,9 +52,9 @@ export function Sidebar({ user, menuItems, activeTab, onTabChange, gradientFrom,
     };
   }, [showProfileDropdown]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     console.log('🔴 Logging out user...');
-    void logout();
+    await logout();
     console.log('✅ User logged out, navigating to login page...');
     navigate('/login');
     toast.success('Logged out successfully');

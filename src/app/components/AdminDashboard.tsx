@@ -125,7 +125,7 @@ export function AdminDashboard() {
             }))
         );
 
-        setPendingUsers(userList.filter((u) => u.role !== "admin" && u.approval_status === "pending"));
+        setPendingUsers(userList.filter((u) => u.role === "user" && u.approval_status === "pending"));
         setCollectionRequests(reqs as any[]);
         setRecyclingCenters(centers as any[]);
         setCollectors(cols as any[]);
@@ -453,6 +453,7 @@ export function AdminDashboard() {
               multiplier: rewardForm.multiplier,
               bonusPoints: rewardForm.bonusPoints,
               pointsPerKg: 0,
+              minWeight: 0,
             }),
           });
           setRewardRules(prev => prev.map(r => r.id === editingRewardRule.id ? updated : r));
@@ -467,6 +468,7 @@ export function AdminDashboard() {
               multiplier: rewardForm.multiplier,
               bonusPoints: rewardForm.bonusPoints,
               pointsPerKg: 0,
+              minWeight: 0,
             }),
           });
           setRewardRules(prev => [...prev, created]);
@@ -644,7 +646,7 @@ export function AdminDashboard() {
 
   const sidebarMenuItems = [
     { key: 'dashboard', label: 'Dashboard', icon: Activity },
-    { key: 'approvals', label: 'Approvals', icon: CheckCircle },
+    { key: 'approvals', label: 'Approvals', icon: CheckCircle, badge: pendingApprovals },
     { key: 'users', label: 'Users', icon: Users },
     { key: 'categories', label: 'Categories', icon: Settings },
     { key: 'rewards', label: 'Rewards', icon: Award },
@@ -882,30 +884,45 @@ export function AdminDashboard() {
                           ? 'bg-white/20 text-white'
                           : 'bg-gray-200 text-gray-700'
                       }`}>
-                        {pendingUsers.filter(u => u.approvalStatus === 'pending').length}
+                        {pendingUsers.filter(u => (u.approvalStatus || u.approval_status) === 'pending').length}
                       </span>
                     </button>
 
                     <button
-                      onClick={() => setApprovalFilter('recycling_collectors')}
+                      onClick={() => setApprovalFilter('centers')}
                       className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all whitespace-nowrap ${
-                        approvalFilter === 'recycling_collectors'
+                        approvalFilter === 'centers'
                           ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg'
                           : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
                       }`}
                     >
-                      <div className="flex items-center gap-1">
-                        <Building2 className="size-5" />
-                        <Truck className="size-5" />
-                      </div>
-                      Recycling & Collector Roles
+                      <Building2 className="size-5" />
+                      Recycling Centers
                       <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                        approvalFilter === 'recycling_collectors'
+                        approvalFilter === 'centers'
                           ? 'bg-white/20 text-white'
                           : 'bg-gray-200 text-gray-700'
                       }`}>
-                        {pendingCenters.filter(c => c.approvalStatus === 'pending').length +
-                         pendingCollectors.filter(c => c.approvalStatus === 'pending').length}
+                        {pendingCenters.filter(c => (c.approvalStatus || c.approval_status) === 'pending').length}
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => setApprovalFilter('collectors')}
+                      className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all whitespace-nowrap ${
+                        approvalFilter === 'collectors'
+                          ? 'bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow-lg'
+                          : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
+                      }`}
+                    >
+                      <Truck className="size-5" />
+                      Collectors
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                        approvalFilter === 'collectors'
+                          ? 'bg-white/20 text-white'
+                          : 'bg-gray-200 text-gray-700'
+                      }`}>
+                        {pendingCollectors.filter(c => (c.approvalStatus || c.approval_status) === 'pending').length}
                       </span>
                     </button>
                   </div>
@@ -913,14 +930,14 @@ export function AdminDashboard() {
 
                 {/* Pending Users */}
                 {approvalFilter === 'users' && 
-                 pendingUsers.filter(u => u.approvalStatus === 'pending').length > 0 && (
+                 pendingUsers.filter(u => (u.approvalStatus || u.approval_status) === 'pending').length > 0 && (
                   <div className="mb-8">
                     <h4 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                       <Users className="size-6 text-green-600" />
-                      Regular Users ({pendingUsers.filter(u => u.approvalStatus === 'pending').length})
+                      Regular Users ({pendingUsers.filter(u => (u.approvalStatus || u.approval_status) === 'pending').length})
                     </h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {pendingUsers.filter(u => u.approvalStatus === 'pending').map((pendingUser) => (
+                      {pendingUsers.filter(u => (u.approvalStatus || u.approval_status) === 'pending').map((pendingUser) => (
                         <div key={pendingUser.id} className="bg-white rounded-2xl border-2 border-gray-100 p-6 hover:border-green-300 hover:shadow-lg transition-all">
                           <div className="flex items-start justify-between mb-4">
                             <div className="flex items-center gap-3">
@@ -967,15 +984,15 @@ export function AdminDashboard() {
                 )}
 
                 {/* Pending Centers */}
-                {approvalFilter === 'recycling_collectors' &&
-                 pendingCenters.filter(c => c.approvalStatus === 'pending').length > 0 && (
+                {approvalFilter === 'centers' &&
+                 pendingCenters.filter(c => (c.approvalStatus || c.approval_status) === 'pending').length > 0 && (
                   <div className="mb-8">
                     <h4 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                       <Building2 className="size-6 text-purple-600" />
-                      Recycling Centers ({pendingCenters.filter(c => c.approvalStatus === 'pending').length})
+                      Recycling Centers ({pendingCenters.filter(c => (c.approvalStatus || c.approval_status) === 'pending').length})
                     </h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {pendingCenters.filter(c => c.approvalStatus === 'pending').map((center) => (
+                      {pendingCenters.filter(c => (c.approvalStatus || c.approval_status) === 'pending').map((center) => (
                         <div key={center.id} className="bg-white rounded-2xl border-2 border-gray-100 p-6 hover:border-purple-300 hover:shadow-lg transition-all">
                           <div className="flex items-start justify-between mb-4">
                             <div className="flex items-center gap-3">
@@ -1022,15 +1039,15 @@ export function AdminDashboard() {
                 )}
 
                 {/* Pending Collectors */}
-                {approvalFilter === 'recycling_collectors' &&
-                 pendingCollectors.filter(c => c.approvalStatus === 'pending').length > 0 && (
+                {approvalFilter === 'collectors' &&
+                 pendingCollectors.filter(c => (c.approvalStatus || c.approval_status) === 'pending').length > 0 && (
                   <div>
                     <h4 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                       <Truck className="size-6 text-blue-600" />
-                      Collectors ({pendingCollectors.filter(c => c.approvalStatus === 'pending').length})
+                      Collectors ({pendingCollectors.filter(c => (c.approvalStatus || c.approval_status) === 'pending').length})
                     </h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {pendingCollectors.filter(c => c.approvalStatus === 'pending').map((collector) => (
+                      {pendingCollectors.filter(c => (c.approvalStatus || c.approval_status) === 'pending').map((collector) => (
                         <div key={collector.id} className="bg-white rounded-2xl border-2 border-gray-100 p-6 hover:border-blue-300 hover:shadow-lg transition-all">
                           <div className="flex items-start justify-between mb-4">
                             <div className="flex items-center gap-3">
@@ -1082,13 +1099,14 @@ export function AdminDashboard() {
 
                 {/* Empty state based on filter */}
                 {(() => {
-                  const hasPendingUsers = pendingUsers.filter(u => u.approvalStatus === 'pending').length > 0;
-                  const hasPendingCenters = pendingCenters.filter(c => c.approvalStatus === 'pending').length > 0;
-                  const hasPendingCollectors = pendingCollectors.filter(c => c.approvalStatus === 'pending').length > 0;
+                  const hasPendingUsers = pendingUsers.filter(u => (u.approvalStatus || u.approval_status) === 'pending').length > 0;
+                  const hasPendingCenters = pendingCenters.filter(c => (c.approvalStatus || c.approval_status) === 'pending').length > 0;
+                  const hasPendingCollectors = pendingCollectors.filter(c => (c.approvalStatus || c.approval_status) === 'pending').length > 0;
 
                   const showEmpty =
                     (approvalFilter === 'users' && !hasPendingUsers) ||
-                    (approvalFilter === 'recycling_collectors' && !hasPendingCenters && !hasPendingCollectors);
+                    (approvalFilter === 'centers' && !hasPendingCenters) ||
+                    (approvalFilter === 'collectors' && !hasPendingCollectors);
 
                   return showEmpty ? (
                     <div className="text-center py-16 bg-gradient-to-br from-gray-50 to-green-50 rounded-2xl border-2 border-dashed border-gray-200">
@@ -1096,7 +1114,8 @@ export function AdminDashboard() {
                       <h4 className="text-xl font-bold text-gray-900 mb-2">All Caught Up!</h4>
                       <p className="text-gray-600">
                         {approvalFilter === 'users' && 'No pending user approvals'}
-                        {approvalFilter === 'recycling_collectors' && 'No pending recycling center or collector approvals'}
+                        {approvalFilter === 'centers' && 'No pending recycling center approvals'}
+                        {approvalFilter === 'collectors' && 'No pending collector approvals'}
                       </p>
                     </div>
                   ) : null;
@@ -1774,6 +1793,20 @@ export function AdminDashboard() {
                   className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all"
                   required
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Category *</label>
+                <select
+                  value={rewardForm.category}
+                  onChange={(e) => setRewardForm({ ...rewardForm, category: e.target.value })}
+                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all"
+                  required
+                >
+                  <option value="all">All Categories</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>{c.label}</option>
+                  ))}
+                </select>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>

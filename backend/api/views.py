@@ -102,6 +102,16 @@ class RegisterViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+        
+        if user.approval_status != 'approved':
+            return Response(
+                {
+                    "message": "Registration successful. Please wait for admin approval.",
+                    "user": UserSerializer(user).data,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
         refresh = RefreshToken.for_user(user)
         return Response(
             {
