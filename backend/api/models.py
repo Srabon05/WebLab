@@ -83,7 +83,9 @@ class CollectionStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     ASSIGNED = "assigned", "Assigned"
     IN_PROGRESS = "in_progress", "In Progress"
+    PICKED_UP = "picked_up", "Picked Up"
     COMPLETED = "completed", "Completed"
+    RECEIVED = "received", "Received"
     CANCELLED = "cancelled", "Cancelled"
 
 
@@ -137,6 +139,7 @@ class Collector(models.Model):
     registered_at = models.DateTimeField()
     approved_at = models.DateTimeField(blank=True, null=True)
     license_number = models.CharField(max_length=64, blank=True, null=True)
+    balance = models.IntegerField(default=0)
 
     def __str__(self) -> str:
         return self.name
@@ -189,10 +192,10 @@ class DisposalGuideline(models.Model):
 
 class CollectionRequest(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="collection_requests")
-    user_name = models.CharField(max_length=255)
-    user_phone = models.CharField(max_length=64)
-    user_address = models.TextField()
-    category = models.CharField(max_length=64)
+    user_name = models.CharField(max_length=255, blank=True)
+    user_phone = models.CharField(max_length=64, blank=True)
+    user_address = models.TextField(blank=True)
+    category = models.ForeignKey("EWasteCategoryConfig", to_field="category", on_delete=models.CASCADE, db_column="category")
     items = models.TextField()
     quantity = models.IntegerField(blank=True, null=True)
     weight = models.FloatField(blank=True, null=True)
@@ -272,3 +275,15 @@ class ChatMessage(models.Model):
     message = models.TextField()
     timestamp = models.DateTimeField()
     read = models.BooleanField(default=False)
+
+
+class Notification(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
+    title = models.CharField(max_length=255)
+    message = models.TextField()
+    type = models.CharField(max_length=32, default="info") # info, success, warning, otp
+    read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"{self.user.email} - {self.title}"

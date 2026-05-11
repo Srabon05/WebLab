@@ -21,6 +21,7 @@ from .views import (
     UsersViewSet,
     logout_view,
     me_view,
+    NotificationViewSet,
 )
 
 router = DefaultRouter()
@@ -39,6 +40,7 @@ router.register(r"reward-profile", UserRewardProfileViewSet, basename="reward-pr
 router.register(r"leaderboard", LeaderboardViewSet, basename="leaderboard")
 router.register(r"conversations", ConversationViewSet, basename="conversations")
 router.register(r"chat-messages", ChatMessageViewSet, basename="chat-messages")
+router.register(r"notifications", NotificationViewSet, basename="notifications")
 
 urlpatterns = [
     path("", include(router.urls)),

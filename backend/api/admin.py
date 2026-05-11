@@ -16,6 +16,7 @@ from .models import (
     RewardTransaction,
     User,
     UserRewardProfile,
+    Notification,
 )
 
 
@@ -49,3 +50,4 @@ admin.site.register(UserRewardProfile)
 admin.site.register(LeaderboardEntry)
 admin.site.register(Conversation)
 admin.site.register(ChatMessage)
+admin.site.register(Notification)

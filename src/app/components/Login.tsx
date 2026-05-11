@@ -154,32 +154,6 @@ export function Login() {
                 </button>
               </p>
             </div>
-
-            {/* Example Email Formats */}
-            <div className="mt-8 pt-6 border-t border-gray-200">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">Sample Login Credentials</h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex items-center gap-2 text-gray-600">
-                  <span className="font-medium text-gray-900">Admin:</span>
-                  <span className="font-mono text-green-600">admin@ewaste.com</span>
-                </div>
-                <div className="flex items-center gap-2 text-gray-600">
-                  <span className="font-medium text-gray-900">User:</span>
-                  <span className="font-mono text-green-600">user@ewaste.com</span>
-                </div>
-                <div className="flex items-center gap-2 text-gray-600">
-                  <span className="font-medium text-gray-900">Collector:</span>
-                  <span className="font-mono text-green-600">collector@ewaste.com</span>
-                </div>
-                <div className="flex items-center gap-2 text-gray-600">
-                  <span className="font-medium text-gray-900">Recycling Center:</span>
-                  <span className="font-mono text-green-600">center@ewaste.com</span>
-                </div>
-                <div className="mt-3 text-xs text-gray-500">
-                  All demo passwords: <span className="font-mono bg-gray-100 px-2 py-1 rounded">password123</span>
-                </div>
-              </div>
-            </div>
           </div>
 
         </div>

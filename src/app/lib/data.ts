@@ -12,6 +12,7 @@ export type CollectionStatus =
   | 'assigned'
   | 'in_progress'
   | 'completed'
+  | 'received'
   | 'cancelled';
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
@@ -733,6 +734,7 @@ export const getStatusColor = (status: CollectionStatus): string => {
     assigned: 'text-blue-600 bg-blue-50',
     in_progress: 'text-purple-600 bg-purple-50',
     completed: 'text-green-600 bg-green-50',
+    received: 'text-orange-600 bg-orange-50',
     cancelled: 'text-red-600 bg-red-50',
   };
   return colors[status];

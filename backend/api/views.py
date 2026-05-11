@@ -1,4 +1,5 @@
 from __future__ import annotations
+from django.utils import timezone
 
 from django.contrib.auth import get_user_model
 from rest_framework import mixins, permissions, status, viewsets
@@ -22,6 +23,7 @@ from .models import (
     RewardRule,
     RewardTransaction,
     UserRewardProfile,
+    Notification,
 )
 from .serializers import (
     CampaignSerializer,
@@ -39,6 +41,7 @@ from .serializers import (
     RewardTransactionSerializer,
     UserRewardProfileSerializer,
     UserSerializer,
+    NotificationSerializer,
 )
 
 User = get_user_model()
@@ -135,6 +138,17 @@ class UsersViewSet(viewsets.ModelViewSet):
             elif instance.role == "collector":
                 Collector.objects.filter(email=instance.email).update(approval_status=instance.approval_status)
 
+    @action(detail=False, methods=["GET"], permission_classes=[permissions.IsAdminUser])
+    def with_points(self, request):
+        users = self.get_queryset().filter(role="user")
+        data = []
+        for u in users:
+            profile, _ = UserRewardProfile.objects.get_or_create(user=u)
+            user_data = UserSerializer(u).data
+            user_data["reward_profile"] = UserRewardProfileSerializer(profile).data
+            data.append(user_data)
+        return Response(data)
+
 
 class RecyclingCenterViewSet(viewsets.ModelViewSet):
     queryset = RecyclingCenter.objects.all().order_by("id")
@@ -180,6 +194,70 @@ class CollectionRequestViewSet(viewsets.ModelViewSet):
     queryset = CollectionRequest.objects.select_related("user", "collector", "recycling_center").all().order_by("-created_at")
     serializer_class = CollectionRequestSerializer
 
+    def perform_create(self, serializer):
+        quantity_val = self.request.data.get("quantity", 1)
+        try:
+            quantity = int(quantity_val)
+        except (ValueError, TypeError):
+            quantity = 1
+
+        reward_points = 0
+        pickup_charge = 20
+
+        # category is already resolved to an EWasteCategoryConfig object by the serializer
+        config = serializer.validated_data.get("category")
+        if config:
+            reward_points = config.reward_points * quantity
+            pickup_charge = getattr(config, "pickup_charge", 20) or 20
+
+        serializer.save(
+            user=self.request.user,
+            reward_points=reward_points,
+            pickup_charge=pickup_charge
+        )
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        old_status = instance.status
+        new_status = serializer.validated_data.get("status", old_status)
+        
+        # Auto-assign recycling center if collector is being assigned and center is missing
+        collector_obj = serializer.validated_data.get("collector")
+        if collector_obj and not serializer.validated_data.get("recycling_center") and not instance.recycling_center:
+            if collector_obj.assigned_center:
+                serializer.validated_data["recycling_center"] = collector_obj.assigned_center
+                
+        updated_instance = serializer.save()
+        
+        if old_status != "completed" and new_status == "completed":
+            # 1. Update User Reward Points based on category ForeignKey
+            config = updated_instance.category  # direct FK object
+            if config:
+                points = config.reward_points * (updated_instance.quantity or 1)
+
+                # Update User Profile
+                profile, _ = UserRewardProfile.objects.get_or_create(user=updated_instance.user)
+                profile.total_points += points
+                profile.lifetime_points += points
+                profile.save()
+
+                # Create Reward Transaction
+                RewardTransaction.objects.create(
+                    user=updated_instance.user,
+                    type="earned",
+                    points=points,
+                    description=f"Earned points for {config.label} pickup",
+                    related_request=updated_instance,
+                    timestamp=updated_instance.completed_at or timezone.now(),
+                    balance=profile.total_points
+                )
+
+            # 2. Update Collector Balance
+            if updated_instance.collector:
+                charge = updated_instance.pickup_charge or 20
+                updated_instance.collector.balance += charge
+                updated_instance.collector.save()
+
     @action(detail=False, methods=["GET"])
     def mine(self, request):
         qs = self.get_queryset().filter(user=request.user)
@@ -200,6 +278,46 @@ class RewardRedemptionViewSet(viewsets.ModelViewSet):
     queryset = RewardRedemption.objects.all().order_by("points_required")
     serializer_class = RewardRedemptionSerializer
 
+    @action(detail=True, methods=["POST"])
+    def redeem(self, request, pk=None):
+        try:
+            redemption = self.get_object()
+            user = request.user
+            profile, _ = UserRewardProfile.objects.get_or_create(user=user)
+
+            if profile.total_points < redemption.points_required:
+                return Response({
+                    "detail": "Not enough points",
+                    "required": redemption.points_required,
+                    "available": profile.total_points
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Process redemption
+            profile.total_points -= redemption.points_required
+            profile.redeemed_points += redemption.points_required
+            profile.save()
+
+            # Update User model total_points as well
+            user.total_points = profile.total_points
+            user.save()
+
+            # Create Reward Transaction
+            transaction = RewardTransaction.objects.create(
+                user=user,
+                type="redeemed",
+                points=redemption.points_required,
+                description=f"Redeemed: {redemption.name}",
+                balance=profile.total_points
+            )
+
+            return Response({
+                "message": f"Successfully redeemed {redemption.name}",
+                "profile": UserRewardProfileSerializer(profile).data,
+                "transaction": RewardTransactionSerializer(transaction).data
+            })
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 
 class UserRewardProfileViewSet(viewsets.ModelViewSet):
     queryset = UserRewardProfile.objects.select_related("user").all()
@@ -207,7 +325,84 @@ class UserRewardProfileViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["GET"])
     def mine(self, request):
+        profile, _ = UserRewardProfile.objects.get_or_create(user=request.user)
+        return Response(self.get_serializer(profile).data)
+
+    @action(detail=True, methods=["POST"], permission_classes=[permissions.IsAdminUser])
+    def award_points(self, request, pk=None):
+        profile = self.get_object()
+        points = request.data.get("points", 0)
+        reason = request.data.get("reason", "Admin Award")
+
+        try:
+            points = int(points)
+        except ValueError:
+            return Response({"detail": "Invalid points value"}, status=status.HTTP_400_BAD_REQUEST)
+
+        profile.total_points += points
+        profile.lifetime_points += points
+        profile.save()
+
+        # Update User model as well
+        user = profile.user
+        user.total_points = profile.total_points
+        user.save()
+
+        # Create Reward Transaction
+        transaction = RewardTransaction.objects.create(
+            user=user,
+            type="bonus",
+            points=points,
+            description=reason,
+            balance=profile.total_points
+        )
+
+        return Response({
+            "message": f"Successfully awarded {points} points",
+            "profile": self.get_serializer(profile).data,
+            "transaction": RewardTransactionSerializer(transaction).data
+        })
+
+    @action(detail=False, methods=["POST"])
+    def demo_points(self, request):
+        profile, _ = UserRewardProfile.objects.get_or_create(user=request.user)
+        points = 500
+        profile.total_points += points
+        profile.lifetime_points += points
+        profile.save()
+
+        user = profile.user
+        user.total_points = profile.total_points
+        user.save()
+
+        transaction = RewardTransaction.objects.create(
+            user=user,
+            type="bonus",
+            points=points,
+            description="Demo Bonus Points",
+            balance=profile.total_points
+        )
+
+        return Response({
+            "message": "Awarded 500 demo points!",
+            "profile": self.get_serializer(profile).data,
+            "transaction": RewardTransactionSerializer(transaction).data
+        })
+
+    @action(detail=False, methods=["GET"])
+    def mine_sync(self, request):
         obj, _ = UserRewardProfile.objects.get_or_create(user=request.user)
+        
+        # Sync points if they appear out of date (e.g. for older accounts)
+        if obj.total_points == 0:
+            from django.db.models import Sum
+            earned = RewardTransaction.objects.filter(user=request.user, type="earned").aggregate(Sum("points"))["points__sum"] or 0
+            redeemed = RewardTransaction.objects.filter(user=request.user, type="redeemed").aggregate(Sum("points"))["points__sum"] or 0
+            if earned > 0:
+                obj.total_points = max(0, earned - redeemed)
+                obj.lifetime_points = earned
+                obj.save()
+                
         return Response(self.get_serializer(obj).data)
 
 
@@ -231,3 +426,15 @@ class ChatMessageViewSet(viewsets.ModelViewSet):
         if conversation_id:
             qs = qs.filter(conversation_id=conversation_id)
         return qs
+
+
+class NotificationViewSet(viewsets.ModelViewSet):
+    queryset = Notification.objects.all().order_by("-created_at")
+    serializer_class = NotificationSerializer
+
+    def get_queryset(self):
+        # Allow filtering by userId
+        user_id = self.request.query_params.get("userId")
+        if user_id:
+            return self.queryset.filter(user_id=user_id)
+        return self.queryset

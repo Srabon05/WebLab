@@ -29,6 +29,7 @@ interface DumpingConfirmationModalProps {
   userName: string;
   userAddress: string;
   collectedItems: CollectedItem[];
+  assignedCenter: { id: string; name: string; address: string } | null;
   onConfirmDumping: (centerId: string, notes: string) => void;
 }
 
@@ -39,9 +40,9 @@ export function DumpingConfirmationModal({
   userName,
   userAddress,
   collectedItems,
+  assignedCenter,
   onConfirmDumping
 }: DumpingConfirmationModalProps) {
-  const [selectedCenter, setSelectedCenter] = useState<string>('');
   const [notes, setNotes] = useState('');
   const [showQRCode, setShowQRCode] = useState(false);
 
@@ -56,10 +57,10 @@ export function DumpingConfirmationModal({
   const totalValue = collectedItems.reduce((sum, item) => sum + item.estimatedValue, 0);
 
   const handleConfirm = () => {
-    if (selectedCenter) {
+    if (assignedCenter) {
       setShowQRCode(true);
       setTimeout(() => {
-        onConfirmDumping(selectedCenter, notes);
+        onConfirmDumping(assignedCenter.id, notes);
         setShowQRCode(false);
         onClose();
       }, 3000);
@@ -138,95 +139,57 @@ export function DumpingConfirmationModal({
                             </p>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <p className="font-bold text-green-700">৳{item.estimatedValue}</p>
-                          <p className="text-xs text-gray-500">Est. value</p>
-                        </div>
+                        {/* Value removed */}
                       </div>
                     ))}
                   </div>
                   
                   {/* Totals */}
                   <div className="mt-5 pt-5 border-t-2 border-green-300">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-white/60 rounded-xl p-4">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Weight className="size-4 text-green-600" />
-                          <p className="text-sm text-gray-600">Total Weight</p>
-                        </div>
-                        <p className="text-2xl font-bold text-gray-900">{totalWeight} kg</p>
+                    <div className="bg-white/60 rounded-xl p-4 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Weight className="size-5 text-green-600" />
+                        <p className="text-sm font-bold text-gray-600 uppercase tracking-wider">Total Combined Weight</p>
                       </div>
-                      <div className="bg-white/60 rounded-xl p-4">
-                        <div className="flex items-center gap-2 mb-1">
-                          <TakaIcon className="size-4 text-green-600" />
-                          <p className="text-sm text-gray-600">Total Value</p>
-                        </div>
-                        <p className="text-2xl font-bold text-green-700">৳{totalValue}</p>
-                      </div>
+                      <p className="text-3xl font-black text-gray-900">{totalWeight} kg</p>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Select Recycling Center */}
+              {/* Assigned Recycling Center */}
               <div className="mb-6">
                 <h4 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <Building2 className="size-5 text-green-600" />
-                  Select Recycling Center
+                  Assigned Recycling Center
                 </h4>
-                <div className="space-y-3">
-                  {recyclingCenters.map((center) => (
-                    <button
-                      key={center.id}
-                      onClick={() => setSelectedCenter(center.id)}
-                      className={`w-full p-5 rounded-2xl border-2 transition-all text-left hover:scale-[1.02] ${
-                        selectedCenter === center.id
-                          ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white border-transparent shadow-lg'
-                          : 'bg-white text-gray-700 border-gray-200 hover:border-green-300'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <p className="font-bold text-lg">{center.name}</p>
-                            {selectedCenter === center.id && (
-                              <CheckCircle className="size-5" />
-                            )}
+                {assignedCenter ? (
+                  <div className="bg-gradient-to-r from-green-500 to-emerald-600 text-white p-6 rounded-2xl border-2 border-transparent shadow-lg shadow-green-200">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <p className="font-bold text-xl">{assignedCenter.name}</p>
+                          <CheckCircle className="size-6 text-green-200" />
+                        </div>
+                        <div className="flex flex-col gap-2 text-sm">
+                          <div className="flex items-center gap-2">
+                            <MapPin className="size-4 text-green-200" />
+                            <span className="text-white/90">{assignedCenter.address || 'Address not available'}</span>
                           </div>
-                          <div className="flex items-center gap-4 text-sm mb-2">
-                            <div className="flex items-center gap-1">
-                              <MapPin className={`size-4 ${selectedCenter === center.id ? 'text-white' : 'text-gray-500'}`} />
-                              <span className={selectedCenter === center.id ? 'text-white/90' : 'text-gray-600'}>
-                                {center.address}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Truck className={`size-4 ${selectedCenter === center.id ? 'text-white' : 'text-gray-500'}`} />
-                              <span className={selectedCenter === center.id ? 'text-white/90' : 'text-gray-600'}>
-                                {center.distance}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {[...Array(5)].map((_, i) => (
-                              <Award 
-                                key={i} 
-                                className={`size-4 ${
-                                  i < Math.floor(center.rating)
-                                    ? selectedCenter === center.id ? 'text-yellow-300 fill-yellow-300' : 'text-yellow-500 fill-yellow-500'
-                                    : selectedCenter === center.id ? 'text-white/30' : 'text-gray-300'
-                                }`}
-                              />
-                            ))}
-                            <span className={`text-sm ml-1 ${selectedCenter === center.id ? 'text-white/90' : 'text-gray-600'}`}>
-                              {center.rating}
-                            </span>
+                          <div className="flex items-center gap-2">
+                            <Clock className="size-4 text-green-200" />
+                            <span className="text-white/90">Deliver during business hours</span>
                           </div>
                         </div>
                       </div>
-                    </button>
-                  ))}
-                </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-red-50 border-2 border-red-100 rounded-xl text-red-600 flex items-center gap-2">
+                    <AlertCircle className="size-5" />
+                    No assigned recycling center found for this request.
+                  </div>
+                )}
               </div>
 
               {/* Additional Notes */}
@@ -280,7 +243,7 @@ export function DumpingConfirmationModal({
                 </button>
                 <button
                   onClick={handleConfirm}
-                  disabled={!selectedCenter}
+                  disabled={!assignedCenter}
                   className="flex-1 px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl hover:shadow-2xl hover:scale-105 transition-all font-bold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
                 >
                   <Check className="size-5" />

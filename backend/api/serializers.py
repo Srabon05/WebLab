@@ -17,6 +17,7 @@ from .models import (
     RewardRule,
     RewardTransaction,
     UserRewardProfile,
+    Notification,
 )
 
 User = get_user_model()
@@ -107,13 +108,14 @@ class CollectorSerializer(serializers.ModelSerializer):
 
 class EWasteCategoryConfigSerializer(serializers.ModelSerializer):
     dbId = serializers.IntegerField(source="pk", read_only=True)
-    id = serializers.CharField(source="category")
+    id = serializers.CharField(source="category", read_only=True)
+    category = serializers.CharField(read_only=True)
     rewardPoints = serializers.IntegerField(source="reward_points")
     pickupCharge = serializers.IntegerField(source="pickup_charge")
 
     class Meta:
         model = EWasteCategoryConfig
-        fields = ("dbId", "id", "label", "description", "rewardPoints", "pickupCharge", "active")
+        fields = ("dbId", "id", "category", "label", "description", "rewardPoints", "pickupCharge", "active")
 
 
 class RewardRuleSerializer(serializers.ModelSerializer):
@@ -177,13 +179,20 @@ class DisposalGuidelineSerializer(serializers.ModelSerializer):
 class CollectionRequestSerializer(serializers.ModelSerializer):
     id = serializers.CharField(source="pk", read_only=True)
     userId = serializers.CharField(source="user_id", read_only=True)
-    userName = serializers.CharField(source="user_name")
-    userPhone = serializers.CharField(source="user_phone")
-    userAddress = serializers.CharField(source="user_address")
+    userName = serializers.CharField(source="user_name", allow_blank=True, required=False, default="")
+    userPhone = serializers.CharField(source="user_phone", allow_blank=True, required=False, default="")
+    userAddress = serializers.CharField(source="user_address", allow_blank=True, allow_null=True, required=False, default="")
+    # category is a ForeignKey to EWasteCategoryConfig via the 'category' slug field
+    category = serializers.SlugRelatedField(
+        slug_field="category",
+        queryset=EWasteCategoryConfig.objects.all()
+    )
+    categoryLabel = serializers.SerializerMethodField()
     collectorId = serializers.CharField(source="collector_id", allow_null=True, required=False)
     collectorName = serializers.SerializerMethodField()
     recyclingCenterId = serializers.CharField(source="recycling_center_id", allow_null=True, required=False)
     recyclingCenterName = serializers.SerializerMethodField()
+    recyclingCenterAddress = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source="created_at")
     assignedAt = serializers.DateTimeField(source="assigned_at", allow_null=True, required=False)
     completedAt = serializers.DateTimeField(source="completed_at", allow_null=True, required=False)
@@ -203,6 +212,7 @@ class CollectionRequestSerializer(serializers.ModelSerializer):
             "userPhone",
             "userAddress",
             "category",
+            "categoryLabel",
             "items",
             "quantity",
             "weight",
@@ -214,6 +224,7 @@ class CollectionRequestSerializer(serializers.ModelSerializer):
             "collectorName",
             "recyclingCenterId",
             "recyclingCenterName",
+            "recyclingCenterAddress",
             "createdAt",
             "assignedAt",
             "completedAt",
@@ -234,11 +245,17 @@ class CollectionRequestSerializer(serializers.ModelSerializer):
     scheduledTime = serializers.CharField(source="scheduled_time", allow_null=True, required=False)
     recyclingOutcome = serializers.JSONField(source="recycling_outcome", allow_null=True, required=False)
 
+    def get_recyclingCenterAddress(self, obj):
+        return obj.recycling_center.address if obj.recycling_center else None
+
     def get_collectorName(self, obj):
         return obj.collector.name if obj.collector else None
 
     def get_recyclingCenterName(self, obj):
         return obj.recycling_center.name if obj.recycling_center else None
+
+    def get_categoryLabel(self, obj):
+        return obj.category.label if obj.category else None
 
 
 class RewardTransactionSerializer(serializers.ModelSerializer):
@@ -271,7 +288,7 @@ class UserRewardProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserRewardProfile
-        fields = ("userId", "totalPoints", "lifetimePoints", "redeemedPoints", "tier", "rank")
+        fields = ("id", "userId", "totalPoints", "lifetimePoints", "redeemedPoints", "tier", "rank")
 
 
 class LeaderboardEntrySerializer(serializers.ModelSerializer):
@@ -311,4 +328,14 @@ class ChatMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ChatMessage
         fields = ("id", "conversationId", "senderId", "senderName", "senderRole", "message", "timestamp", "read")
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    id = serializers.CharField(source="pk", read_only=True)
+    userId = serializers.PrimaryKeyRelatedField(source="user", queryset=User.objects.all())
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+
+    class Meta:
+        model = Notification
+        fields = ("id", "userId", "title", "message", "type", "read", "createdAt")
 

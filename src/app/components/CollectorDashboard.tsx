@@ -9,7 +9,7 @@ import {
   UserCircle, HelpCircle, Settings, Mail, BookOpen,
   Search, MoreVertical, Image, Paperclip, Smile,
   CheckCheck, Circle, Mic, FileText, Download, Video,
-  ThumbsUp, Heart, Laugh
+  ThumbsUp, Heart, Laugh, Building2
 } from "lucide-react";
 
 // Bangladeshi Taka Icon Component
@@ -33,72 +33,51 @@ export function CollectorDashboard() {
   const navigate = useNavigate();
   const user = getCurrentUser();
 
+  // State Declarations
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'available' | 'assigned' | 'deliveries' | 'completed' | 'earnings' | 'messages'>('dashboard');
+  const [selectedRequest, setSelectedRequest] = useState<string | null>(null);
+  const [showOTPModal, setShowOTPModal] = useState(false);
+  const [otp, setOtp] = useState('');
+  const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
+  const [newMessage, setNewMessage] = useState('');
+  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showHelpModal, setShowHelpModal] = useState(false);
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawMethod, setWithdrawMethod] = useState('bkash');
+  const [accountNumber, setAccountNumber] = useState('');
+  const [showDumpingModal, setShowDumpingModal] = useState(false);
+  const [selectedDumpRequest, setSelectedDumpRequest] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [collectionRequests, setCollectionRequests] = useState<any[]>([]);
+  const [collectors, setCollectors] = useState<any[]>([]);
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Refs
+  const profileDropdownRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
+  const handleLogout = () => {
+    void logout();
+    navigate('/');
+  };
+
   // Check authentication with useEffect to avoid setState during render
   useEffect(() => {
     if (!user || user.role !== 'collector') {
       navigate('/login');
     }
   }, [user, navigate]);
-
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'available' | 'assigned' | 'completed' | 'earnings' | 'messages'>('dashboard');
-  const [selectedRequest, setSelectedRequest] = useState<string | null>(null);
-  const [showOTPModal, setShowOTPModal] = useState(false);
-  const [otp, setOtp] = useState('');
-  const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
-  const [newMessage, setNewMessage] = useState('');
-  
-  // State for profile dropdown
-  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
-  const profileDropdownRef = useRef<HTMLDivElement>(null);
-  
-  // State for modals
-  const [showProfileModal, setShowProfileModal] = useState(false);
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [showHelpModal, setShowHelpModal] = useState(false);
-  
-  // State for withdraw
-  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
-  const [withdrawAmount, setWithdrawAmount] = useState('');
-  const [withdrawMethod, setWithdrawMethod] = useState('bkash');
-  const [accountNumber, setAccountNumber] = useState('');
-  
-  // State for dumping confirmation
-  const [showDumpingModal, setShowDumpingModal] = useState(false);
-  const [selectedDumpRequest, setSelectedDumpRequest] = useState<string | null>(null);
-  
-  // State for messages
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingDuration, setRecordingDuration] = useState(0);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
-  
-  // State for managing collection requests - MUST BE BEFORE EARLY RETURN
-  const [collectionRequests, setCollectionRequests] = useState<any[]>([]);
-  const [collectors, setCollectors] = useState<any[]>([]);
-  const [conversations, setConversations] = useState<any[]>([]);
-  const [chatMessages, setChatMessages] = useState<any[]>([]);
-
-  useEffect(() => {
-    if (!user) return;
-    (async () => {
-      try {
-        const [reqs, cols, convs] = await Promise.all([
-          apiRequest("/collection-requests/"),
-          apiRequest("/collectors/"),
-          apiRequest("/conversations/"),
-        ]);
-        setCollectionRequests(reqs as any[]);
-        setCollectors(cols as any[]);
-        setConversations(convs as any[]);
-      } catch {
-        // ignore
-      }
-    })();
-  }, [user?.id]);
 
   useEffect(() => {
     if (!selectedConversation) return;
@@ -111,6 +90,35 @@ export function CollectorDashboard() {
       }
     })();
   }, [selectedConversation]);
+
+  // Scroll to bottom of messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages, selectedConversation]);
+
+
+  // Load backend data - MUST BE BEFORE EARLY RETURNS
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        const [reqs, cols, convs] = await Promise.all([
+          apiRequest("/collection-requests/"),
+          apiRequest("/collectors/"),
+          apiRequest("/conversations/"),
+        ]);
+        setCollectionRequests(reqs as any[]);
+        setCollectors(cols as any[]);
+        setConversations(convs as any[]);
+      } catch (error) {
+        console.error("Failed to fetch dashboard data:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    })();
+  }, [user?.id]);
+
+
   
   // Quick replies
   const quickReplies = [
@@ -141,17 +149,50 @@ export function CollectorDashboard() {
     };
   }, [showProfileDropdown]);
 
-  // Return null if not authenticated (after all hooks are called)
+  // Get collector data
+  const collector = collectors.find(c => c.email?.toLowerCase() === user?.email?.toLowerCase());
+  
+  // Early return if not authorized
   if (!user || user.role !== 'collector') {
-    return null;
+    return null; // Let useEffect handle navigation
   }
 
-  // Get collector data
-  const collector = collectors.find(c => c.email === user.email) || collectors[0];
-  
+  // Show loading spinner while fetching data
+  if (isLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+          <p className="text-gray-500 font-medium">Loading your dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Handle case where collector profile is missing
+  if (!collector) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50">
+        <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 max-w-md text-center">
+          <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Truck className="size-10 text-blue-600" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Collector Profile Not Found</h2>
+          <p className="text-gray-600 mb-6">We couldn't find a collector profile associated with {user.email}. Please contact support.</p>
+          <button 
+            onClick={handleLogout}
+            className="w-full bg-gray-900 text-white py-3 rounded-xl font-bold hover:bg-gray-800 transition-all"
+          >
+            Logout
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Filter collections for this collector
   const myCollections = collectionRequests.filter(
-    r => r.collectorId === collector.id
+    r => String(r.collectorId) === String(collector.id)
   );
   
   const availableRequests = collectionRequests.filter(
@@ -166,6 +207,10 @@ export function CollectorDashboard() {
     r => r.status === 'completed'
   );
 
+  const toDeliverCollections = myCollections.filter(
+    r => r.status === 'picked_up' || r.status === 'received'
+  );
+
   // User conversations
   const collectorConversations = conversations.filter(
     c => c.participants.some(p => p.id === collector.id && p.role === 'collector')
@@ -177,14 +222,7 @@ export function CollectorDashboard() {
   const conversationMessages = chatMessages.filter(m => m.conversationId === selectedConversation);
   
   // Scroll to bottom of messages
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [conversationMessages, selectedConversation]);
 
-  const handleLogout = () => {
-    void logout();
-    navigate('/');
-  };
   
   const handleViewProfile = () => {
     setShowProfileDropdown(false);
@@ -278,6 +316,21 @@ export function CollectorDashboard() {
             pickupOTP: generatedOTP,
           }),
         });
+        
+        // Create notification for the user
+        const currentReq = collectionRequests.find(r => r.id === requestId);
+        if (currentReq?.userId) {
+          await apiRequest(`/notifications/`, {
+            method: "POST",
+            body: JSON.stringify({
+              userId: currentReq.userId,
+              title: "Verification OTP",
+              message: `Your verification code for pickup ${requestId} is ${generatedOTP}. Share this with the collector to complete your request.`,
+              type: "otp"
+            })
+          });
+        }
+
         const reqs = await apiRequest("/collection-requests/");
         setCollectionRequests(reqs as any[]);
       } catch {
@@ -298,7 +351,7 @@ export function CollectorDashboard() {
           await apiRequest(`/collection-requests/${selectedRequest}/`, {
             method: "PATCH",
             body: JSON.stringify({
-              status: "completed",
+              status: "picked_up",
               completedAt: new Date().toISOString(),
               otpVerifiedAt: new Date().toISOString(),
             }),
@@ -416,9 +469,9 @@ export function CollectorDashboard() {
       return;
     }
     
-    if (amount > earnedSalary) {
+    if (amount > collector.balance) {
       toast.error('Insufficient balance', {
-        description: `You can only withdraw up to ৳${earnedSalary.toLocaleString()}`
+        description: `You can only withdraw up to ৳${collector.balance.toLocaleString()}`
       });
       return;
     }
@@ -451,14 +504,29 @@ export function CollectorDashboard() {
   const handleConfirmDumping = (centerId: string, notes: string) => {
     if (!selectedDumpRequest) return;
 
-    // Process dumping confirmation
-    toast.success('Delivery Confirmed!', {
-      description: `Items from request ${selectedDumpRequest} delivered to recycling center.`
-    });
-
-    // Reset state
-    setShowDumpingModal(false);
-    setSelectedDumpRequest(null);
+    (async () => {
+      try {
+        await apiRequest(`/collection-requests/${selectedDumpRequest}/`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            status: "received",
+            receivedAt: new Date().toISOString(),
+          }),
+        });
+        const reqs = await apiRequest("/collection-requests/");
+        setCollectionRequests(reqs as any[]);
+        
+        toast.success('Delivery Confirmed!', {
+          description: `Items from request ${selectedDumpRequest} delivered to recycling center.`
+        });
+      } catch (error) {
+        toast.error('Failed to confirm delivery');
+      } finally {
+        // Reset state
+        setShowDumpingModal(false);
+        setSelectedDumpRequest(null);
+      }
+    })();
   };
 
   // Add notification handler
@@ -532,8 +600,13 @@ export function CollectorDashboard() {
     conv.lastMessage.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const totalEarnings = completedCollections.reduce((sum, r) => sum + (r.collectorEarnings || 0), 0);
-  const todayEarnings = 250; // Mock value
+  const totalEarnings = completedCollections.reduce((sum, r) => sum + (r.pickupCharge || 0), 0);
+  const todayEarnings = completedCollections.filter(r => {
+    if (!r.completedAt) return false;
+    const completedDate = new Date(r.completedAt);
+    const today = new Date();
+    return completedDate.toDateString() === today.toDateString();
+  }).reduce((sum, r) => sum + (r.pickupCharge || 0), 0);
 
   // Salary-based earnings
   const monthlySalary = 18000; // Base monthly salary in BDT
@@ -554,26 +627,23 @@ export function CollectorDashboard() {
     {
       icon: CheckCircle,
       label: 'Completed Today',
-      value: '2',
+      value: completedCollections.filter(r => {
+        if (!r.completedAt) return false;
+        const completedDate = new Date(r.completedAt);
+        const today = new Date();
+        return completedDate.toDateString() === today.toDateString();
+      }).length.toString(),
       color: 'from-green-500 to-emerald-600',
       bgLight: 'bg-green-50',
       textColor: 'text-green-600',
     },
     {
       icon: TakaIcon,
-      label: 'Today Salary',
-      value: `৳${dailySalary}`,
-      color: 'from-purple-500 to-purple-600',
+      label: 'My Balance',
+      value: `৳${collector.balance || 0}`,
+      color: 'from-purple-500 to-indigo-600',
       bgLight: 'bg-purple-50',
       textColor: 'text-purple-600',
-    },
-    {
-      icon: TrendingUp,
-      label: 'Earned This Month',
-      value: `৳${earnedSalary.toLocaleString()}`,
-      color: 'from-yellow-500 to-orange-600',
-      bgLight: 'bg-yellow-50',
-      textColor: 'text-yellow-600',
     },
     {
       icon: Star,
@@ -589,15 +659,16 @@ export function CollectorDashboard() {
     { key: 'dashboard', label: 'Dashboard', icon: Truck },
     { key: 'assigned', label: 'Assigned', icon: Truck, badge: assignedCollections.length },
     { key: 'available', label: 'Available', icon: Package, badge: availableRequests.length },
+    { key: 'deliveries', label: 'Deliveries', icon: Truck, badge: toDeliverCollections.length },
     { key: 'completed', label: 'Completed', icon: CheckCircle },
-    { key: 'earnings', label: 'Salary', icon: TakaIcon },
+    { key: 'earnings', label: 'My Wallet', icon: TakaIcon },
     { key: 'messages', label: 'Messages', icon: MessageSquare, badge: totalUnreadMessages > 0 ? totalUnreadMessages : undefined },
   ];
 
   return (
     <div className="flex h-screen bg-gradient-to-br from-gray-50 to-cyan-50/30 overflow-hidden">
       <Sidebar
-        user={user}
+        user={{ name: user?.name || 'Collector', email: user?.email || '', role: user?.role || 'collector' }}
         menuItems={sidebarMenuItems}
         activeTab={activeTab}
         onTabChange={(tab) => setActiveTab(tab as any)}
@@ -616,8 +687,9 @@ export function CollectorDashboard() {
                   {activeTab === 'dashboard' && 'Dashboard'}
                   {activeTab === 'assigned' && 'My Assigned Collections'}
                   {activeTab === 'available' && 'Available Collections'}
+                  {activeTab === 'deliveries' && 'Items to Deliver'}
                   {activeTab === 'completed' && 'Completed Collections'}
-                  {activeTab === 'earnings' && 'My Salary'}
+                  {activeTab === 'earnings' && 'My Wallet'}
                   {activeTab === 'messages' && 'Messages'}
                 </h1>
                 <p className="text-sm text-gray-600 flex items-center gap-2">
@@ -675,11 +747,11 @@ export function CollectorDashboard() {
                       <TakaIcon className="size-7 text-white" />
                     </div>
                     <div>
-                      <p className="text-yellow-100 text-sm">Earned This Month</p>
-                      <h2 className="text-4xl font-bold text-white">৳{earnedSalary.toLocaleString()}</h2>
+                      <p className="text-yellow-100 text-sm">Available Balance</p>
+                      <h2 className="text-4xl font-bold text-white">৳{collector.balance.toLocaleString()}</h2>
                     </div>
                   </div>
-                  <p className="text-yellow-100 text-sm">Base salary: ৳{monthlySalary.toLocaleString()}/month • Worked {workedDays} days</p>
+                  <p className="text-yellow-100 text-sm">Lifetime earnings: ৳{totalEarnings.toLocaleString()} • Completed: {completedCollections.length}</p>
                 </div>
                 <button
                   onClick={() => setShowWithdrawModal(true)}
@@ -1004,6 +1076,73 @@ export function CollectorDashboard() {
               </div>
             )}
 
+            {/* Deliveries Tab */}
+            {activeTab === 'deliveries' && (
+              <div className="animate-slide-in-up">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-2xl font-bold text-gray-900">Items to Deliver</h3>
+                  <div className="flex items-center gap-2 text-sm text-blue-600 font-semibold">
+                    <Truck className="size-4" />
+                    <span>{toDeliverCollections.length} items in transit</span>
+                  </div>
+                </div>
+
+                {toDeliverCollections.length === 0 ? (
+                  <div className="text-center py-16 bg-gradient-to-br from-gray-50 to-blue-50 rounded-2xl border-2 border-dashed border-gray-200">
+                    <Truck className="size-16 text-gray-300 mx-auto mb-4" />
+                    <p className="text-gray-600">No items currently with you for delivery</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {toDeliverCollections.map((request) => (
+                      <div key={request.id} className="bg-white rounded-2xl border-2 border-blue-100 p-6 hover:shadow-lg transition-all">
+                        <div className="flex items-center justify-between mb-4">
+                          <div>
+                            <div className="flex items-center gap-3 mb-2">
+                              <h4 className="font-bold text-gray-900">{request.id}</h4>
+                              <span className={`px-4 py-1.5 rounded-full text-xs font-bold ${
+                                request.status === 'received' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'
+                              }`}>
+                                {request.status === 'received' ? 'DELIVERED - AWAITING CONFIRMATION' : 'PICKED UP'}
+                              </span>
+                            </div>
+                            <p className="text-sm text-gray-600">{getCategoryLabel(request.category)}</p>
+                          </div>
+                          <div className="text-right text-sm text-gray-500">
+                             <p>Picked up: {request.completedAt ? new Date(request.completedAt).toLocaleDateString() : 'N/A'}</p>
+                          </div>
+                        </div>
+
+                        <div className="bg-gray-50 rounded-xl p-4 mb-4">
+                           <div className="flex items-start gap-3">
+                              <Building2 className="size-5 text-gray-400 mt-1" />
+                              <div>
+                                 <p className="text-xs text-gray-500">Deliver To</p>
+                                 <p className="font-bold text-gray-900">{request.recyclingCenterName}</p>
+                                 <p className="text-sm text-gray-600">{request.recyclingCenterAddress}</p>
+                              </div>
+                           </div>
+                        </div>
+
+                        {request.status === 'picked_up' && (
+                           <button
+                             onClick={() => {
+                               setSelectedDumpRequest(request.id);
+                               setShowDumpingModal(true);
+                             }}
+                             className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl hover:shadow-xl hover:scale-105 transition-all font-bold"
+                           >
+                             <Truck className="size-5" />
+                             Deliver to Recycling Center
+                           </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Completed Tab */}
             {activeTab === 'completed' && (
               <div className="animate-slide-in-up">
@@ -1055,19 +1194,7 @@ export function CollectorDashboard() {
                           </div>
                         </div>
 
-                        {/* Deliver to Center Button */}
-                        <div className="mt-4 pt-4 border-t border-gray-100">
-                          <button
-                            onClick={() => {
-                              setSelectedDumpRequest(request.id);
-                              setShowDumpingModal(true);
-                            }}
-                            className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl hover:shadow-xl hover:scale-105 transition-all font-bold"
-                          >
-                            <Truck className="size-5" />
-                            Deliver to Recycling Center
-                          </button>
-                        </div>
+                        {/* Deliver to Center Button removed from here */}
                       </div>
                     ))}
                   </div>
@@ -1082,27 +1209,36 @@ export function CollectorDashboard() {
                   <div className="w-16 h-16 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-full flex items-center justify-center mx-auto mb-4">
                     <TakaIcon className="size-8 text-white" />
                   </div>
-                  <h3 className="text-3xl font-bold text-gray-900 mb-2">Salary Overview</h3>
-                  <p className="text-gray-600">Track your monthly salary and attendance</p>
+                  <h3 className="text-3xl font-bold text-gray-900 mb-2">Wallet & Withdraw</h3>
+                  <p className="text-gray-600">Manage your earnings and withdrawal requests</p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                  <div className="bg-gradient-to-br from-purple-600 to-indigo-700 rounded-2xl p-8 text-white shadow-xl">
+                    <p className="text-purple-100 text-sm mb-2">Available Balance</p>
+                    <p className="text-5xl font-bold mb-2">৳{collector.balance.toLocaleString()}</p>
+                    <p className="text-purple-100 text-sm">Withdraw anytime to your account</p>
+                  </div>
+
                   <div className="bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl p-8 text-white shadow-xl">
-                    <p className="text-green-100 text-sm mb-2">Daily Salary Rate</p>
-                    <p className="text-5xl font-bold mb-2">৳{dailySalary}</p>
-                    <p className="text-green-100 text-sm">Per working day</p>
+                    <p className="text-green-100 text-sm mb-2">Total Earned</p>
+                    <p className="text-5xl font-bold mb-2">৳{totalEarnings.toLocaleString()}</p>
+                    <p className="text-green-100 text-sm">Lifetime earnings from pickups</p>
                   </div>
+                </div>
 
-                  <div className="bg-gradient-to-br from-blue-500 to-cyan-600 rounded-2xl p-8 text-white shadow-xl">
-                    <p className="text-blue-100 text-sm mb-2">Earned So Far</p>
-                    <p className="text-5xl font-bold mb-2">৳{earnedSalary.toLocaleString()}</p>
-                    <p className="text-blue-100 text-sm">{workedDays} days worked this month</p>
-                  </div>
-
-                  <div className="bg-gradient-to-br from-purple-500 to-indigo-600 rounded-2xl p-8 text-white shadow-xl">
-                    <p className="text-purple-100 text-sm mb-2">Monthly Salary</p>
-                    <p className="text-5xl font-bold mb-2">৳{monthlySalary.toLocaleString()}</p>
-                    <p className="text-purple-100 text-sm">Base salary amount</p>
+                <div className="bg-white rounded-2xl border-2 border-gray-100 p-8 mb-8">
+                  <div className="flex items-center justify-between mb-6">
+                    <div>
+                      <h4 className="text-xl font-bold text-gray-900">Withdraw Funds</h4>
+                      <p className="text-gray-500 text-sm">Transfer your balance to bKash or Bank</p>
+                    </div>
+                    <button
+                      onClick={() => setShowWithdrawModal(true)}
+                      className="px-8 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl font-bold hover:shadow-lg transition-all"
+                    >
+                      Withdraw Now
+                    </button>
                   </div>
                 </div>
 
@@ -1891,7 +2027,7 @@ export function CollectorDashboard() {
       <WithdrawModal
         showModal={showWithdrawModal}
         onClose={() => setShowWithdrawModal(false)}
-        totalEarnings={totalEarnings}
+        totalEarnings={collector.balance}
         withdrawAmount={withdrawAmount}
         setWithdrawAmount={setWithdrawAmount}
         withdrawMethod={withdrawMethod}
@@ -1903,8 +2039,8 @@ export function CollectorDashboard() {
 
       {/* Dumping Confirmation Modal */}
       {selectedDumpRequest && (() => {
-        const selectedRequest = completedCollections.find(r => r.id === selectedDumpRequest);
-        const weightValue = selectedRequest?.weight;
+        const selectedRequest = collectionRequests.find(r => r.id === selectedDumpRequest);
+        const weightValue = selectedRequest?.weight || selectedRequest?.estimatedWeight;
         const parsedWeight = typeof weightValue === 'string' 
           ? parseFloat(weightValue.replace(/[^\d.]/g, '')) 
           : typeof weightValue === 'number' 
@@ -1919,18 +2055,23 @@ export function CollectorDashboard() {
               setSelectedDumpRequest(null);
             }}
             requestId={selectedDumpRequest}
-            userName={selectedRequest?.name || 'User'}
-            userAddress={selectedRequest?.address || 'Address'}
+            userName={selectedRequest?.userName || 'User'}
+            userAddress={selectedRequest?.userAddress || 'Address'}
             collectedItems={[
               {
-                name: getCategoryLabel(selectedRequest?.category || 'electronics'),
+                name: selectedRequest?.items || getCategoryLabel(selectedRequest?.category || 'electronics'),
                 quantity: selectedRequest?.quantity || 1,
                 unit: 'items',
                 weight: parsedWeight,
-                estimatedValue: selectedRequest?.collectorEarnings || 25
+                estimatedValue: selectedRequest?.pickupCharge || 25
               }
             ]}
             onConfirmDumping={handleConfirmDumping}
+            assignedCenter={selectedRequest ? {
+              id: selectedRequest.recyclingCenterId,
+              name: selectedRequest.recyclingCenterName,
+              address: selectedRequest.recyclingCenterAddress
+            } : null}
           />
         );
       })()}

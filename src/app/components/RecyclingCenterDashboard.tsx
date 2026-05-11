@@ -27,6 +27,11 @@ export function RecyclingCenterDashboard() {
     'dashboard' | 'incoming' | 'processing' | 'processed' | 'guidelines' | 'messages'
   >('dashboard');
   
+  const handleLogout = () => {
+    void logout();
+    navigate('/');
+  };
+  
   const [selectedRequest, setSelectedRequest] = useState<string | null>(null);
   const [showClassificationModal, setShowClassificationModal] = useState(false);
   const [showCertificateModal, setShowCertificateModal] = useState(false);
@@ -58,6 +63,37 @@ export function RecyclingCenterDashboard() {
   const [conversations, setConversations] = useState<any[]>([]);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [collectors, setCollectors] = useState<any[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
+  const [rewardTransactions, setRewardTransactions] = useState<any[]>([]);
+  const [rewardRedemptions, setRewardRedemptions] = useState<any[]>([]);
+  const [rewardProfile, setRewardProfile] = useState<any | null>(null);
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Load backend data - MUST BE BEFORE EARLY RETURNS
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        const [centers, requests, guidelines, convs, cols] = await Promise.all([
+          apiRequest("/recycling-centers/"),
+          apiRequest("/collection-requests/"),
+          apiRequest("/guidelines/"),
+          apiRequest("/conversations/"),
+          apiRequest("/collectors/"),
+        ]);
+        setRecyclingCenters(centers as any[]);
+        setCollectionRequests(requests as any[]);
+        setDisposalGuidelines(guidelines as any[]);
+        setConversations(convs as any[]);
+        setCollectors(cols as any[]);
+      } catch (error) {
+        console.error("Failed to fetch dashboard data:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    })();
+  }, [user?.id]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -83,18 +119,76 @@ export function RecyclingCenterDashboard() {
     }
   }, [user, navigate]);
 
-  const center = recyclingCenters.find(c => c.email === user.email) || recyclingCenters[0];
+  useEffect(() => {
+    if (!selectedConversation) return;
+    (async () => {
+      try {
+        const msgs = await apiRequest(`/chat-messages/?conversationId=${selectedConversation}`);
+        setChatMessages(msgs as any[]);
+      } catch {
+        setChatMessages([]);
+      }
+    })();
+  }, [selectedConversation]);
+
+  const center = recyclingCenters.find(c => c.email?.toLowerCase() === user?.email?.toLowerCase());
   
+  // Early return if not authorized
+  if (!user || user.role !== 'recycling_center') {
+    return null; // Let useEffect handle navigation
+  }
+
+  // Show loading spinner while fetching data
+  if (isLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-500"></div>
+          <p className="text-gray-500 font-medium">Loading your dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Handle case where center profile is missing
+  if (!center) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50">
+        <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 max-w-md text-center">
+          <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Building2 className="size-10 text-red-600" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Center Profile Not Found</h2>
+          <p className="text-gray-600 mb-6">We couldn't find a recycling center profile associated with {user.email}. Please contact support.</p>
+          <button 
+            onClick={handleLogout}
+            className="w-full bg-gray-900 text-white py-3 rounded-xl font-bold hover:bg-gray-800 transition-all"
+          >
+            Logout
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const centerCollections = collectionRequests.filter(
-    r => r.recyclingCenterId === center.id
+    r => String(r.recyclingCenterId) === String(center.id)
+  );
+
+  // Available: Show pending requests that are not yet assigned to ANY center
+  const availableRequests = collectionRequests.filter(
+    r => (r.status === 'pending' || r.status === 'requested') && !r.recyclingCenterId
   );
   
-  // Incoming: Show pending requests (not yet assigned to collector) and those assigned but not yet picked up
-  const incomingCollections = centerCollections.filter(
-    r => (r.status === 'pending' || (r.status === 'assigned' && !assignedRequests[r.id])) && 
-         !processingRequests.includes(r.id) &&
-         !completedRequests.includes(r.id)
-  );
+  // Incoming: Show requests assigned to this center OR available requests
+  const incomingCollections = [
+    ...centerCollections.filter(
+      r => (r.status === 'pending' || r.status === 'received' || (r.status === 'assigned' && !assignedRequests[r.id])) && 
+           !processingRequests.includes(r.id) &&
+           !completedRequests.includes(r.id)
+    ),
+    ...availableRequests
+  ];
   
   // Get processing items
   const processingCollections = centerCollections.filter(
@@ -107,45 +201,8 @@ export function RecyclingCenterDashboard() {
 
   const totalUnreadMessages = conversations.reduce((sum, conv) => sum + conv.unreadCount, 0);
 
-  const handleLogout = () => {
-    void logout();
-    navigate('/');
-  };
 
-  // Load backend data
-  useEffect(() => {
-    if (!user) return;
-    (async () => {
-      try {
-        const [centers, requests, guidelines, convs, cols] = await Promise.all([
-          apiRequest("/recycling-centers/"),
-          apiRequest("/collection-requests/"),
-          apiRequest("/guidelines/"),
-          apiRequest("/conversations/"),
-          apiRequest("/collectors/"),
-        ]);
-        setRecyclingCenters(centers as any[]);
-        setCollectionRequests(requests as any[]);
-        setDisposalGuidelines(guidelines as any[]);
-        setConversations(convs as any[]);
-        setCollectors(cols as any[]);
-      } catch {
-        // ignore
-      }
-    })();
-  }, [user?.id]);
 
-  useEffect(() => {
-    if (!selectedConversation) return;
-    (async () => {
-      try {
-        const msgs = await apiRequest(`/chat-messages/?conversationId=${selectedConversation}`);
-        setChatMessages(msgs as any[]);
-      } catch {
-        setChatMessages([]);
-      }
-    })();
-  }, [selectedConversation]);
   
   const handleViewProfile = () => {
     setShowProfileDropdown(false);
@@ -192,6 +249,27 @@ export function RecyclingCenterDashboard() {
     });
   };
 
+  const handleConfirmDelivery = (requestId: string) => {
+    (async () => {
+      try {
+        await apiRequest(`/collection-requests/${requestId}/`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            status: "completed",
+            completedAt: new Date().toISOString(),
+          }),
+        });
+        const requests = await apiRequest("/collection-requests/");
+        setCollectionRequests(requests as any[]);
+        toast.success('Delivery confirmed!', {
+          description: 'Request marked as completed. User and collector notified.'
+        });
+      } catch (error) {
+        toast.error('Failed to confirm delivery');
+      }
+    })();
+  };
+
   const handleAssignCollector = (requestId: string) => {
     setSelectedRequest(requestId);
     setSelectedCollectorId('');
@@ -207,6 +285,7 @@ export function RecyclingCenterDashboard() {
             method: "PATCH",
             body: JSON.stringify({
               collectorId: selectedCollectorId,
+              recyclingCenterId: center.id, // Claim the request for this center
               status: "assigned",
               assignedAt: new Date().toISOString(),
             }),
@@ -363,7 +442,7 @@ export function RecyclingCenterDashboard() {
   return (
     <div className="flex h-screen bg-gradient-to-br from-gray-50 to-purple-50/30 overflow-hidden">
       <Sidebar
-        user={user}
+        user={{ name: user?.name || 'Center', email: user?.email || '', role: user?.role || 'recycling_center' }}
         menuItems={sidebarMenuItems}
         activeTab={activeTab}
         onTabChange={(tab) => setActiveTab(tab as any)}
@@ -559,6 +638,12 @@ export function RecyclingCenterDashboard() {
                               <span className={`px-4 py-1.5 rounded-full text-xs font-bold ${getStatusColor(request.status)}`}>
                                 {request.status.toUpperCase()}
                               </span>
+                              {!request.recyclingCenterId && (
+                                <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-[10px] font-black animate-pulse flex items-center gap-1">
+                                  <Sparkles className="size-3" />
+                                  AVAILABLE
+                                </span>
+                              )}
                             </div>
                             <p className="text-sm text-gray-600 flex items-center gap-2">
                               <Package className="size-4" />
@@ -602,7 +687,15 @@ export function RecyclingCenterDashboard() {
                         </div>
 
                         <div className="flex gap-2">
-                          {!request.collectorId && !assignedRequests[request.id] ? (
+                          {request.status === 'received' ? (
+                            <button
+                              onClick={() => handleConfirmDelivery(request.id)}
+                              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-orange-600 to-amber-600 text-white rounded-xl hover:shadow-lg hover:scale-105 transition-all font-bold ring-4 ring-orange-500/20"
+                            >
+                              <CheckCircle className="size-4" />
+                              Confirm Delivery
+                            </button>
+                          ) : !request.collectorId && !assignedRequests[request.id] ? (
                             <button
                               onClick={() => handleAssignCollector(request.id)}
                               className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl hover:shadow-lg hover:scale-105 transition-all font-medium"
@@ -1145,7 +1238,7 @@ export function RecyclingCenterDashboard() {
                   Select Collector *
                 </label>
                 <div className="space-y-3">
-                  {collectors.filter((c) => c.approvalStatus === 'approved').map((collector: any) => (
+                  {collectors.filter((c) => (c.approvalStatus === 'approved' || c.approval_status === 'approved')).map((collector: any) => (
                     <div
                       key={collector.id}
                       onClick={() => setSelectedCollectorId(collector.id)}
