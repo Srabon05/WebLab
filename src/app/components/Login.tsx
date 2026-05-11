@@ -41,10 +41,10 @@ export function Login() {
   };
 
   const quickLogins = [
-    { email: "admin@ewaste.com", role: "Admin", color: "from-red-500 to-pink-600" },
-    { email: "center@ewaste.com", role: "Recycling Center", color: "from-purple-500 to-indigo-600" },
-    { email: "collector@ewaste.com", role: "Collector", color: "from-blue-500 to-cyan-600" },
-    { email: "user@ewaste.com", role: "User", color: "from-green-500 to-emerald-600" },
+    { email: "admin@gamil.com", role: "Admin", color: "from-red-500 to-pink-600" },
+    { email: "center@gamil.com", role: "Recycling Center", color: "from-purple-500 to-indigo-600" },
+    { email: "collector@gamil.com", role: "Collector", color: "from-blue-500 to-cyan-600" },
+    { email: "user@gamil.com", role: "User", color: "from-green-500 to-emerald-600" },
   ];
 
   return (
@@ -153,6 +153,25 @@ export function Login() {
                   Sign up
                 </button>
               </p>
+            </div>
+
+            <div className="mt-8 pt-8 border-t border-gray-100">
+              <p className="text-sm font-medium text-gray-500 mb-4 uppercase tracking-wider text-center">Quick Access (Dev Only)</p>
+              <div className="grid grid-cols-2 gap-3">
+                {quickLogins.map((login) => (
+                  <button
+                    key={login.role}
+                    type="button"
+                    onClick={() => {
+                      setEmail(login.email);
+                      setPassword("12345678");
+                    }}
+                    className={`p-3 rounded-xl bg-gradient-to-br ${login.color} text-white text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 active:scale-95 transition-all text-center`}
+                  >
+                    {login.role}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 

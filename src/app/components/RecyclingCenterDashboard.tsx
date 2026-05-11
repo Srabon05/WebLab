@@ -39,6 +39,7 @@ export function RecyclingCenterDashboard() {
   const [showAssignCollectorModal, setShowAssignCollectorModal] = useState(false);
   const [selectedCollectorId, setSelectedCollectorId] = useState<string>('');
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   
   // State for tracking request statuses
@@ -75,18 +76,20 @@ export function RecyclingCenterDashboard() {
     if (!user) return;
     (async () => {
       try {
-        const [centers, requests, guidelines, convs, cols] = await Promise.all([
+        const [centers, requests, guidelines, convs, cols, usersData] = await Promise.all([
           apiRequest("/recycling-centers/"),
           apiRequest("/collection-requests/"),
           apiRequest("/guidelines/"),
           apiRequest("/conversations/"),
           apiRequest("/collectors/"),
+          apiRequest("/users/"),
         ]);
         setRecyclingCenters(centers as any[]);
         setCollectionRequests(requests as any[]);
         setDisposalGuidelines(guidelines as any[]);
         setConversations(convs as any[]);
         setCollectors(cols as any[]);
+        setAllUsers(usersData as any[]);
       } catch (error) {
         console.error("Failed to fetch dashboard data:", error);
       } finally {
@@ -130,6 +133,37 @@ export function RecyclingCenterDashboard() {
       }
     })();
   }, [selectedConversation]);
+
+  const loadConversations = async () => {
+    try {
+      const convs = await apiRequest("/conversations/");
+      setConversations(convs as any[]);
+    } catch {
+      // ignore refresh errors
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== "messages") return;
+    void loadConversations();
+    const intervalId = setInterval(() => {
+      void loadConversations();
+    }, 5000);
+    return () => clearInterval(intervalId);
+  }, [activeTab, user?.id]);
+
+  useEffect(() => {
+    if (activeTab !== "messages" || !selectedConversation) return;
+    const intervalId = setInterval(async () => {
+      try {
+        const msgs = await apiRequest(`/chat-messages/?conversationId=${selectedConversation}`);
+        setChatMessages(msgs as any[]);
+      } catch {
+        // ignore refresh errors
+      }
+    }, 3000);
+    return () => clearInterval(intervalId);
+  }, [activeTab, selectedConversation]);
 
   const center = recyclingCenters.find(c => c.email?.toLowerCase() === user?.email?.toLowerCase());
   
@@ -199,7 +233,93 @@ export function RecyclingCenterDashboard() {
     r => r.status === 'completed' || completedRequests.includes(r.id)
   );
 
-  const totalUnreadMessages = conversations.reduce((sum, conv) => sum + conv.unreadCount, 0);
+  const centerParticipantIds = new Set([String(center?.id), String(user?.id)].filter(Boolean));
+  const visibleRequestIds = new Set([
+    ...centerCollections.map(r => String(r.id)),
+    ...availableRequests.map(r => String(r.id))
+  ]);
+  
+  // 1-on-1 Conversation Logic: Map everything to individuals
+  const getIndividualContacts = () => {
+    const contacts: any[] = [];
+    const seenIds = new Set();
+
+    // 1. Add people from existing conversations
+    conversations.forEach(conv => {
+      const others = (conv.participants || []).filter(
+        (p: any) => String(p.id) !== String(user?.id) && String(p.id) !== String(center?.id)
+      );
+      others.forEach((p: any) => {
+        if (!seenIds.has(String(p.id))) {
+          contacts.push({
+            id: conv.id,
+            realConvId: conv.id,
+            targetId: String(p.id),
+            displayName: p.name,
+            role: p.role,
+            lastMessage: conv.last_message || "No messages",
+            lastMessageTime: conv.last_message_time || new Date().toISOString(),
+            unreadCount: conv.unread_count || 0,
+            isPotential: false
+          });
+          seenIds.add(String(p.id));
+        }
+      });
+    });
+
+    // 2. Add people from visible requests (who don't have a conversation yet)
+    visibleRequests.forEach(req => {
+      const participants = [
+        { id: String(req.userId), name: req.userName, role: 'user' },
+        req.collectorId ? { id: String(req.collectorId), name: req.collectorName, role: 'collector' } : null
+      ].filter(Boolean);
+
+      participants.forEach(p => {
+        if (p && !seenIds.has(p.id)) {
+          contacts.push({
+            id: `potential-${p.id}`,
+            targetId: p.id,
+            displayName: p.name,
+            role: p.role,
+            relatedRequestId: req.id,
+            lastMessage: "Start a conversation",
+            lastMessageTime: new Date().toISOString(),
+            unreadCount: 0,
+            isPotential: true
+          });
+          seenIds.add(p.id);
+        }
+      });
+    });
+
+    // 3. Add all other users and collectors
+    const allPeople = [
+      ...allUsers.filter(u => u.role === 'user'),
+      ...collectors
+    ];
+    
+    allPeople.forEach(p => {
+      const pid = String(p.id);
+      if (!seenIds.has(pid) && pid !== String(user?.id) && pid !== String(center?.id)) {
+        contacts.push({
+          id: `general-${pid}`,
+          targetId: pid,
+          displayName: p.name,
+          role: p.role === 'user' ? 'user' : 'collector',
+          lastMessage: "No history",
+          lastMessageTime: new Date().toISOString(),
+          unreadCount: 0,
+          isPotential: true
+        });
+        seenIds.add(pid);
+      }
+    });
+
+    return contacts;
+  };
+
+  const finalSidebarList = getIndividualContacts();
+  const totalUnreadMessages = conversations.reduce((sum, conv) => sum + (conv.unreadCount || 0), 0);
 
 
 
@@ -384,10 +504,52 @@ export function RecyclingCenterDashboard() {
     setRecoveredMaterials(recoveredMaterials.filter((_, i) => i !== index));
   };
 
-  const handleSendMessage = () => {
-    if (newMessage.trim() && selectedConversation) {
+  const handleSendMessage = async () => {
+    if (!newMessage.trim() || !selectedConversation) return;
+
+    let convId = selectedConversation;
+    const isPotential = convId.startsWith('potential-') || convId.startsWith('general-');
+
+    try {
+      if (isPotential) {
+        const potentialConv = selectedConv;
+        const resp = await apiRequest("/conversations/", {
+          method: "POST",
+          body: JSON.stringify({
+            related_request: potentialConv?.relatedRequestId || null,
+            participants: [
+              { id: String(center?.id || user?.id), name: center?.name || user?.name, role: 'recycling_center' },
+              { id: String(potentialConv?.targetId), name: potentialConv?.displayName, role: potentialConv?.role }
+            ]
+          })
+        });
+        const realConv = resp as any;
+        convId = realConv.id;
+        setSelectedConversation(convId);
+        // Refresh conversations list to include the new one
+        const allConvs = await apiRequest("/conversations/");
+        setConversations(allConvs as any[]);
+      }
+
+      await apiRequest("/chat-messages/", {
+        method: "POST",
+        body: JSON.stringify({
+          conversationId: convId,
+          senderId: String(center?.id || user?.id),
+          senderName: center?.name || user?.name || "Recycling Center",
+          senderRole: "recycling_center",
+          message: newMessage.trim(),
+          timestamp: new Date().toISOString(),
+          read: false,
+        }),
+      });
+      const msgs = await apiRequest(`/chat-messages/?conversationId=${selectedConversation}`);
+      setChatMessages(msgs as any[]);
+      await loadConversations();
       toast.success('Message sent');
       setNewMessage('');
+    } catch (error) {
+      toast.error("Failed to send message");
     }
   };
 
@@ -426,9 +588,9 @@ export function RecyclingCenterDashboard() {
     },
   ];
 
-  const selectedReq = collectionRequests.find(r => r.id === selectedRequest);
-  const selectedConv = conversations.find(c => c.id === selectedConversation);
-  const conversationMessages = (chatMessages || []).filter(m => m.conversationId === selectedConversation);
+  const selectedReq = collectionRequests.find(r => String(r.id) === String(selectedRequest));
+  const selectedConv = finalSidebarList.find(c => String(c.id) === String(selectedConversation));
+  const conversationMessages = (chatMessages || []).filter(m => String(m.conversationId) === String(selectedConversation));
 
   const sidebarMenuItems = [
     { key: 'dashboard', label: 'Dashboard', icon: Building2 },
@@ -972,17 +1134,16 @@ export function RecyclingCenterDashboard() {
 
                     {/* Conversations List */}
                     <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                      {conversations.length === 0 ? (
+                      {finalSidebarList.length === 0 ? (
                         <div className="text-center py-12">
                           <MessageSquare className="size-12 text-gray-300 mx-auto mb-3" />
-                          <p className="text-gray-500 text-sm">No conversations yet</p>
+                          <p className="text-gray-500 text-sm">No contacts available</p>
                         </div>
                       ) : (
-                        conversations.map((conv: any) => {
-                          const userName =
-                            collectionRequests.find((r) => r.id === conv.relatedRequestId)?.userName || "User";
-                          const initials = userName.split(' ').map(n => n[0]).join('').toUpperCase();
-                          const isOnline = Math.random() > 0.5; // Mock online status
+                        finalSidebarList.map((conv: any) => {
+                          const displayName = conv.displayName || "User";
+                          const initials = displayName.split(' ').map(n => n[0]).join('').toUpperCase();
+                          const isOnline = Math.random() > 0.5;
                           
                           return (
                             <button
@@ -1008,22 +1169,36 @@ export function RecyclingCenterDashboard() {
                                     <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-white" />
                                   )}
                                 </div>
-
+ 
                                 {/* Content */}
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center justify-between mb-1">
-                                    <span className="font-bold text-gray-900 text-sm truncate">{userName}</span>
+                                    <span className="font-bold text-gray-900 text-sm truncate">{displayName}</span>
                                     {conv.unreadCount > 0 && (
                                       <span className="ml-2 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold flex-shrink-0">
                                         {conv.unreadCount}
                                       </span>
                                     )}
                                   </div>
-                                  <p className="text-xs text-gray-500 mb-1">{conv.relatedRequestId}</p>
+                                  <div className="flex items-center gap-1.5 mb-1">
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase ${
+                                      conv.role === 'collector' ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'
+                                    }`}>
+                                      {conv.role === 'collector' ? 'Collector' : 'User'}
+                                    </span>
+                                    {conv.relatedRequestId && (
+                                      <span className="text-[10px] text-gray-400 font-medium">Req #{conv.relatedRequestId}</span>
+                                    )}
+                                  </div>
                                   <p className="text-xs text-gray-600 truncate">{conv.lastMessage}</p>
                                   <p className="text-xs text-gray-400 mt-1">
                                     {new Date(conv.lastMessageTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                   </p>
+                                  {conv.isPotential && (
+                                    <span className="text-[10px] bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full font-bold mt-1 inline-block">
+                                      NEW CONTACT
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             </button>
@@ -1043,10 +1218,9 @@ export function RecyclingCenterDashboard() {
                             <div className="flex items-center gap-4">
                               {(() => {
                                 const conv = selectedConv;
-                                const userName =
-                                  collectionRequests.find((r) => r.id === conv?.relatedRequestId)?.userName || "User";
-                                const initials = userName.split(' ').map(n => n[0]).join('').toUpperCase();
-                                const isOnline = Math.random() > 0.5;
+                                  const userName = selectedConv?.displayName || "User";
+                                  const initials = userName.split(' ').map(n => n[0]).join('').toUpperCase();
+                                  const isOnline = Math.random() > 0.5;
 
                                 return (
                                   <>
@@ -1059,11 +1233,15 @@ export function RecyclingCenterDashboard() {
                                       )}
                                     </div>
                                     <div>
-                                      <h4 className="font-bold text-lg">{userName}</h4>
-                                      <div className="flex items-center gap-2 text-sm">
-                                        <span className="text-purple-100">{selectedConv?.relatedRequestId}</span>
-                                        <span className="text-purple-200">•</span>
-                                        <span className="text-purple-100">{isOnline ? 'Online' : 'Offline'}</span>
+                                      <h4 className="font-bold text-lg">
+                                        {selectedConv?.displayName || "User"}
+                                      </h4>
+                                      <div className="flex gap-2">
+                                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                                          selectedConv?.role === 'collector' ? 'bg-blue-400 text-white' : 'bg-green-400 text-white'
+                                        }`}>
+                                          {selectedConv?.role === 'collector' ? 'Collector' : 'User'}
+                                        </span>
                                       </div>
                                     </div>
                                   </>
@@ -1110,58 +1288,63 @@ export function RecyclingCenterDashboard() {
                               const isCenter = msg.senderRole === 'recycling_center';
                               const showAvatar = index === 0 || 
                                 conversationMessages[index - 1]?.senderRole !== msg.senderRole;
-                              const userName = isCenter
-                                ? "You"
-                                : collectionRequests.find((r) => r.id === selectedConv?.relatedRequestId)?.userName || "User";
-                              const initials = userName.split(' ').map(n => n[0]).join('').toUpperCase();
+                              
+                              let userName = msg.senderName;
+                              if (isCenter) userName = "You";
+                              else if (msg.senderRole === 'collector') userName = `Collector: ${msg.senderName}`;
+                              else if (msg.senderRole === 'user') userName = `User: ${msg.senderName}`;
+                              
+                              const initials = msg.senderName.split(' ').map(n => n[0]).join('').toUpperCase();
 
                               return (
-                                <div
-                                  key={msg.id}
-                                  className={`flex items-end gap-2 ${isCenter ? 'justify-end' : 'justify-start'} animate-slide-in-up`}
-                                >
-                                  {!isCenter && showAvatar && (
-                                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-400 to-gray-600 flex items-center justify-center font-bold text-white text-xs flex-shrink-0">
-                                      {initials}
-                                    </div>
-                                  )}
-                                  {!isCenter && !showAvatar && <div className="w-8" />}
-
-                                  <div className={`max-w-md group ${isCenter ? 'items-end' : 'items-start'}`}>
-                                    {showAvatar && (
-                                      <p className={`text-xs font-semibold mb-1 px-1 ${isCenter ? 'text-right text-purple-600' : 'text-gray-600'}`}>
-                                        {userName}
-                                      </p>
+                                  <div
+                                    key={msg.id}
+                                    className={`flex items-end gap-2 ${isCenter ? 'justify-start' : 'justify-end'} animate-slide-in-up`}
+                                  >
+                                    {isCenter && showAvatar && (
+                                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center font-bold text-white text-xs flex-shrink-0">
+                                        {user.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+                                      </div>
                                     )}
-                                    <div className={`relative px-4 py-3 rounded-2xl shadow-sm ${
-                                      isCenter
-                                        ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-br-md'
-                                        : 'bg-white text-gray-900 rounded-bl-md border border-gray-200'
-                                    }`}>
-                                      <p className="text-sm leading-relaxed">{msg.message}</p>
-                                      <div className={`flex items-center gap-2 mt-1.5 ${
-                                        isCenter ? 'justify-end' : 'justify-start'
-                                      }`}>
-                                        <p className={`text-xs ${
-                                          isCenter ? 'text-purple-200' : 'text-gray-500'
-                                        }`}>
-                                          {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    {isCenter && !showAvatar && <div className="w-8" />}
+
+                                    <div className={`max-w-md group ${isCenter ? 'items-start' : 'items-end'}`}>
+                                      {showAvatar && (
+                                        <p className={`text-xs font-semibold mb-1 px-1 ${isCenter ? 'text-left text-purple-600' : 'text-right text-gray-600'}`}>
+                                          {userName}
                                         </p>
-                                        {isCenter && (
-                                          <CheckCircle className="size-3 text-purple-200" />
-                                        )}
+                                      )}
+                                      <div className={`relative px-4 py-3 rounded-2xl shadow-sm ${
+                                        isCenter
+                                          ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-bl-md'
+                                          : 'bg-white text-gray-900 rounded-br-md border border-gray-200'
+                                      }`}>
+                                        <p className="text-sm leading-relaxed">{msg.message}</p>
+                                        <div className={`flex items-center gap-2 mt-1.5 ${
+                                          isCenter ? 'justify-start' : 'justify-end'
+                                        }`}>
+                                          <p className={`text-xs ${
+                                            isCenter ? 'text-purple-200' : 'text-gray-500'
+                                          }`}>
+                                            {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                          </p>
+                                          {isCenter && (
+                                            <CheckCircle className="size-3 text-purple-200" />
+                                          )}
+                                        </div>
                                       </div>
                                     </div>
-                                  </div>
 
-                                  {isCenter && showAvatar && (
-                                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center font-bold text-white text-xs flex-shrink-0">
-                                      {user.name.split(' ').map(n => n[0]).join('').toUpperCase()}
-                                    </div>
-                                  )}
-                                  {isCenter && !showAvatar && <div className="w-8" />}
-                                </div>
-                              );
+                                    {!isCenter && showAvatar && (
+                                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-xs flex-shrink-0 ${
+                                        msg.senderRole === 'collector' ? 'bg-blue-500' : 'bg-green-500'
+                                      }`}>
+                                        {msg.senderRole === 'collector' ? 'C' : 'U'}
+                                      </div>
+                                    )}
+                                    {!isCenter && !showAvatar && <div className="w-8" />}
+                                  </div>
+                                );
                             })
                           )}
                         </div>

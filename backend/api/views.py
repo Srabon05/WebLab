@@ -199,10 +199,27 @@ class CollectionRequestViewSet(viewsets.ModelViewSet):
             reward_points = config.reward_points * quantity
             pickup_charge = getattr(config, "pickup_charge", 20) or 20
 
-        serializer.save(
+        instance = serializer.save(
             user=self.request.user,
             reward_points=reward_points,
             pickup_charge=pickup_charge
+        )
+
+        # Create a conversation for this request
+        Conversation.objects.get_or_create(
+            related_request=instance,
+            defaults={
+                "participants": [
+                    {
+                        "id": str(self.request.user.id),
+                        "name": self.request.user.name or "User",
+                        "role": "user"
+                    }
+                ],
+                "last_message": "Conversation started",
+                "last_message_time": timezone.now(),
+                "unread_count": 0
+            }
         )
 
     def perform_update(self, serializer):
@@ -217,6 +234,55 @@ class CollectionRequestViewSet(viewsets.ModelViewSet):
                 serializer.validated_data["recycling_center"] = collector_obj.assigned_center
                 
         updated_instance = serializer.save()
+        
+        # Sync conversation participants
+        conv, created = Conversation.objects.get_or_create(
+            related_request=updated_instance,
+            defaults={
+                "participants": [],
+                "last_message": "Conversation started",
+                "last_message_time": timezone.now(),
+                "unread_count": 0
+            }
+        )
+        
+        participants = conv.participants or []
+        participant_ids = {str(p.get("id")) for p in participants}
+        
+        # Ensure User is in participants
+        user_id = str(updated_instance.user.id)
+        if user_id not in participant_ids:
+            participants.append({
+                "id": user_id,
+                "name": updated_instance.user.name or "User",
+                "role": "user"
+            })
+            participant_ids.add(user_id)
+            
+        # Ensure Recycling Center is in participants
+        if updated_instance.recycling_center:
+            rc_id = str(updated_instance.recycling_center.id)
+            if rc_id not in participant_ids:
+                participants.append({
+                    "id": rc_id,
+                    "name": updated_instance.recycling_center.name,
+                    "role": "recycling_center"
+                })
+                participant_ids.add(rc_id)
+                
+        # Ensure Collector is in participants
+        if updated_instance.collector:
+            col_id = str(updated_instance.collector.id)
+            if col_id not in participant_ids:
+                participants.append({
+                    "id": col_id,
+                    "name": updated_instance.collector.name,
+                    "role": "collector"
+                })
+                participant_ids.add(col_id)
+                
+        conv.participants = participants
+        conv.save()
         
         if old_status != "completed" and new_status == "completed":
             # 1. Update User Reward Points based on category ForeignKey
@@ -298,10 +364,38 @@ class ConversationViewSet(viewsets.ModelViewSet):
     queryset = Conversation.objects.all().order_by("-last_message_time")
     serializer_class = ConversationSerializer
 
+    def perform_create(self, serializer):
+        if not serializer.validated_data.get("last_message_time"):
+            serializer.save(last_message_time=timezone.now())
+        else:
+            serializer.save()
+
 
 class ChatMessageViewSet(viewsets.ModelViewSet):
     queryset = ChatMessage.objects.select_related("conversation").all().order_by("timestamp")
     serializer_class = ChatMessageSerializer
+
+    def perform_create(self, serializer):
+        message = serializer.save()
+        conversation = message.conversation
+        
+        # Add sender to participants if not already there
+        participants = list(conversation.participants or [])
+        participant_ids = {str(p.get("id")) for p in participants}
+        sender_id = str(message.sender_id)
+        
+        if sender_id not in participant_ids:
+            participants.append({
+                "id": sender_id,
+                "name": message.sender_name,
+                "role": message.sender_role
+            })
+            conversation.participants = participants
+            
+        conversation.last_message = (message.message or "")[:255]
+        conversation.last_message_time = message.timestamp
+        conversation.unread_count = (conversation.unread_count or 0) + 1
+        conversation.save()
 
     def get_queryset(self):
         qs = super().get_queryset()

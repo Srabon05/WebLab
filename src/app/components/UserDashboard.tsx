@@ -118,16 +118,77 @@ export function UserDashboard() {
     c => c.active && (c.targetAudience === 'all' || c.targetAudience === 'users')
   );
 
-  // User conversations
-  const userConversations = conversations.filter(
-    c => c.participants.some(p => p.id === user?.id && p.role === 'user')
-  );
-  const totalUnreadMessages = userConversations.reduce((sum, conv) => sum + conv.unreadCount, 0);
+  // 1-on-1 Conversation Logic: Map everything to individuals
+  const getIndividualContacts = () => {
+    const contacts: any[] = [];
+    const seenIds = new Set();
+
+    // 1. Add people from existing conversations
+    conversations.forEach(conv => {
+      const others = (conv.participants || []).filter(
+        (p: any) => String(p.id) !== String(user?.id)
+      );
+      others.forEach((p: any) => {
+        if (!seenIds.has(String(p.id))) {
+          contacts.push({
+            id: conv.id,
+            realConvId: conv.id,
+            targetId: String(p.id),
+            displayName: p.name,
+            role: p.role,
+            lastMessage: conv.last_message || "No messages",
+            lastMessageTime: conv.last_message_time || new Date().toISOString(),
+            unreadCount: conv.unread_count || 0,
+            isPotential: false
+          });
+          seenIds.add(String(p.id));
+        }
+      });
+    });
+
+    // 2. Add people from requests (who don't have a conversation yet)
+    collectionRequests.forEach(req => {
+      const participants = [
+        req.recyclingCenterId ? { id: String(req.recyclingCenterId), name: req.recyclingCenterName, role: 'recycling_center' } : null,
+        req.collectorId ? { id: String(req.collectorId), name: req.collectorName, role: 'collector' } : null
+      ].filter(Boolean);
+
+      participants.forEach(p => {
+        if (p && !seenIds.has(p.id)) {
+          contacts.push({
+            id: `potential-${p.id}`,
+            targetId: p.id,
+            displayName: p.name,
+            role: p.role,
+            relatedRequestId: req.id,
+            lastMessage: "Start a conversation",
+            lastMessageTime: new Date().toISOString(),
+            unreadCount: 0,
+            isPotential: true
+          });
+          seenIds.add(p.id);
+        }
+      });
+    });
+
+    return contacts;
+  };
+
+  const finalSidebarList = getIndividualContacts();
+  const totalUnreadMessages = conversations.reduce((sum, conv) => sum + (conv.unreadCount || 0), 0);
 
   // Define these before useEffect hooks to avoid initialization errors
-  const selectedReq = collectionRequests.find(r => r.id === selectedRequest);
-  const selectedConv = userConversations.find(c => c.id === selectedConversation);
-  const conversationMessages = chatMessages.filter(m => m.conversationId === selectedConversation);
+  const selectedReq = collectionRequests.find(r => String(r.id) === String(selectedRequest));
+  const selectedConv = finalSidebarList.find(c => String(c.id) === String(selectedConversation));
+  const conversationMessages = chatMessages.filter(m => String(m.conversationId) === String(selectedConversation));
+  const loadConversations = async () => {
+    try {
+      const allConversations = await apiRequest("/conversations/");
+      setConversations(allConversations as any[]);
+    } catch {
+      // ignore refresh errors
+    }
+  };
 
   // Auto-scroll to bottom of messages
   useEffect(() => {
@@ -146,6 +207,28 @@ export function UserDashboard() {
       }
     })();
   }, [selectedConversation]);
+
+  useEffect(() => {
+    if (activeTab !== "messages") return;
+    void loadConversations();
+    const intervalId = setInterval(() => {
+      void loadConversations();
+    }, 5000);
+    return () => clearInterval(intervalId);
+  }, [activeTab, user?.id]);
+
+  useEffect(() => {
+    if (activeTab !== "messages" || !selectedConversation) return;
+    const intervalId = setInterval(async () => {
+      try {
+        const msgs = await apiRequest(`/chat-messages/?conversationId=${selectedConversation}`);
+        setChatMessages(msgs as any[]);
+      } catch {
+        // ignore refresh errors
+      }
+    }, 3000);
+    return () => clearInterval(intervalId);
+  }, [activeTab, selectedConversation]);
 
   // Recording timer
   useEffect(() => {
@@ -437,13 +520,53 @@ export function UserDashboard() {
     doc.save(`Recycling_Certificate_${request.id}.pdf`);
   };
 
-  const handleSendMessage = () => {
-    if ((newMessage.trim() || attachedFiles.length > 0) && selectedConversation) {
+  const handleSendMessage = async () => {
+    if (!(newMessage.trim() || attachedFiles.length > 0) || !selectedConversation || !user) return;
+
+    let convId = selectedConversation;
+    const isPotential = convId.startsWith('potential-');
+
+    try {
+      if (isPotential) {
+        const potentialConv = selectedConv;
+        const resp = await apiRequest("/conversations/", {
+          method: "POST",
+          body: JSON.stringify({
+            related_request: potentialConv?.relatedRequestId || null,
+            participants: [
+              { id: String(user?.id), name: user?.name, role: 'user' },
+              { id: String(potentialConv?.targetId), name: potentialConv?.displayName, role: potentialConv?.role }
+            ]
+          })
+        });
+        const realConv = resp as any;
+        convId = realConv.id;
+        setSelectedConversation(convId);
+        await loadConversations();
+      }
+
+      await apiRequest("/chat-messages/", {
+        method: "POST",
+        body: JSON.stringify({
+          conversationId: convId,
+          senderId: String(user.id),
+          senderName: user.name || "User",
+          senderRole: "user",
+          message: newMessage.trim(),
+          timestamp: new Date().toISOString(),
+          read: false,
+        }),
+      });
+      const msgs = await apiRequest(`/chat-messages/?conversationId=${convId}`);
+      setChatMessages(msgs as any[]);
+      await loadConversations();
       toast.success('Message sent');
       setNewMessage('');
       setAttachedFiles([]);
       setShowEmojiPicker(false);
       setShowQuickReplies(false);
+    } catch {
+      toast.error("Failed to send message");
     }
   };
 
@@ -1366,25 +1489,35 @@ export function UserDashboard() {
                   <div className="lg:col-span-1 bg-gray-50 rounded-2xl p-4 border-2 border-gray-100">
                     <h4 className="font-bold text-gray-900 mb-4">Conversations</h4>
                     <div className="space-y-2">
-                      {userConversations.length === 0 ? (
+                      {finalSidebarList.length === 0 ? (
                         <p className="text-gray-500 text-sm text-center py-8">No messages yet</p>
                       ) : (
-                        userConversations.map((conv) => (
+                        finalSidebarList.map((conv: any) => (
                           <button
                             key={conv.id}
                             onClick={() => setSelectedConversation(conv.id)}
                             className={`w-full text-left p-4 rounded-xl transition-all ${
                               selectedConversation === conv.id
-                                ? 'bg-white shadow-md border-2 border-green-300'
-                                : 'bg-white hover:bg-gray-50 border border-gray-200'
+                                ? 'bg-white shadow-md border-2 border-green-300 scale-[1.02]'
+                                : 'bg-white/70 hover:bg-white border border-gray-200'
                             }`}
                           >
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="font-semibold text-gray-900">{conv.relatedRequestId}</span>
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="font-bold text-gray-900">{conv.displayName || "Contact"}</span>
                               {conv.unreadCount > 0 && (
                                 <span className="w-6 h-6 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">
                                   {conv.unreadCount}
                                 </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5 mb-2">
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase ${
+                                conv.role === 'recycling_center' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'
+                              }`}>
+                                {conv.role === 'recycling_center' ? 'Center' : 'Collector'}
+                              </span>
+                              {conv.relatedRequestId && (
+                                <span className="text-[10px] text-gray-400 font-medium">Req #{conv.relatedRequestId}</span>
                               )}
                             </div>
                             <p className="text-xs text-gray-500 truncate">{conv.lastMessage}</p>
@@ -1398,11 +1531,24 @@ export function UserDashboard() {
                   <div className="lg:col-span-2 bg-white rounded-2xl border-2 border-gray-100 overflow-hidden flex flex-col" style={{ height: '600px' }}>
                     {selectedConversation ? (
                       <>
-                        <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-green-50 to-blue-50">
+                        <div className="p-4 border-b border-gray-200 bg-white">
                           <div className="flex items-center justify-between">
-                            <div>
-                              <h4 className="font-bold text-gray-900">{selectedConv?.relatedRequestId}</h4>
-                              <p className="text-sm text-gray-600">Chat with collector</p>
+                            <div className="flex items-center gap-3">
+                              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-white ${
+                                selectedConv?.role === 'recycling_center' ? 'bg-purple-500' : 'bg-blue-500'
+                              }`}>
+                                {(selectedConv?.displayName || "U").charAt(0).toUpperCase()}
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-gray-900">{selectedConv?.displayName}</h4>
+                                <div className="flex gap-2">
+                                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                                    selectedConv?.role === 'recycling_center' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'
+                                  }`}>
+                                    {selectedConv?.role === 'recycling_center' ? 'Center' : 'Collector'}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
                             <button
                               onClick={() => selectedConv && simulateReceiveOTP(selectedConv.relatedRequestId)}

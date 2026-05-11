@@ -214,6 +214,21 @@ class Command(BaseCommand):
             },
         )
 
+        # Ensure conversation exists for the request
+        Conversation.objects.get_or_create(
+            related_request=req,
+            defaults={
+                "participants": [
+                    {"id": str(gt_center.id), "name": gt_center.name, "role": "recycling_center"},
+                    {"id": str(normal_user.id), "name": normal_user.name, "role": "user"},
+                    {"id": str(karim.id), "name": karim.name, "role": "collector"},
+                ],
+                "last_message": "Conversation started",
+                "last_message_time": dt("2026-03-28T10:30:00Z"),
+                "unread_count": 0,
+            },
+        )
+
         RewardRedemption.objects.get_or_create(
             name="Amazon Gift Card",
             defaults={

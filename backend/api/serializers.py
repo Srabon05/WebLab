@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework import serializers
 
 from .models import (
@@ -312,7 +313,12 @@ class ConversationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Conversation
-        fields = ("id", "participants", "relatedRequestId", "lastMessage", "lastMessageTime", "unreadCount")
+        fields = ("id", "participants", "related_request", "relatedRequestId", "lastMessage", "lastMessageTime", "unreadCount")
+        extra_kwargs = {
+            "last_message": {"required": False, "default": "Conversation started"},
+            "last_message_time": {"required": False},
+            "unread_count": {"required": False},
+        }
 
     def get_relatedRequestId(self, obj):
         return str(obj.related_request_id) if obj.related_request_id else None
@@ -321,13 +327,25 @@ class ConversationSerializer(serializers.ModelSerializer):
 class ChatMessageSerializer(serializers.ModelSerializer):
     id = serializers.CharField(source="pk", read_only=True)
     conversationId = serializers.CharField(source="conversation_id", read_only=True)
+    conversation = serializers.PrimaryKeyRelatedField(queryset=Conversation.objects.all(), write_only=True, required=False)
     senderId = serializers.CharField(source="sender_id")
     senderName = serializers.CharField(source="sender_name")
     senderRole = serializers.CharField(source="sender_role")
+    timestamp = serializers.DateTimeField(required=False)
 
     class Meta:
         model = ChatMessage
-        fields = ("id", "conversationId", "senderId", "senderName", "senderRole", "message", "timestamp", "read")
+        fields = ("id", "conversationId", "conversation", "senderId", "senderName", "senderRole", "message", "timestamp", "read")
+
+    def to_internal_value(self, data):
+        payload = dict(data)
+        if "conversation" not in payload and "conversationId" in payload:
+            payload["conversation"] = payload["conversationId"]
+        return super().to_internal_value(payload)
+
+    def create(self, validated_data):
+        validated_data.setdefault("timestamp", timezone.now())
+        return super().create(validated_data)
 
 
 class NotificationSerializer(serializers.ModelSerializer):

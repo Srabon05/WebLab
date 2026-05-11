@@ -91,6 +91,37 @@ export function CollectorDashboard() {
     })();
   }, [selectedConversation]);
 
+  const loadConversations = async () => {
+    try {
+      const convs = await apiRequest("/conversations/");
+      setConversations(convs as any[]);
+    } catch {
+      // ignore refresh errors
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== "messages") return;
+    void loadConversations();
+    const intervalId = setInterval(() => {
+      void loadConversations();
+    }, 5000);
+    return () => clearInterval(intervalId);
+  }, [activeTab, user?.id]);
+
+  useEffect(() => {
+    if (activeTab !== "messages" || !selectedConversation) return;
+    const intervalId = setInterval(async () => {
+      try {
+        const msgs = await apiRequest(`/chat-messages/?conversationId=${selectedConversation}`);
+        setChatMessages(msgs as any[]);
+      } catch {
+        // ignore refresh errors
+      }
+    }, 3000);
+    return () => clearInterval(intervalId);
+  }, [activeTab, selectedConversation]);
+
   // Scroll to bottom of messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -192,7 +223,7 @@ export function CollectorDashboard() {
 
   // Filter collections for this collector
   const myCollections = collectionRequests.filter(
-    r => String(r.collectorId) === String(collector.id)
+    r => String(r.collectorId) === String(collector?.id)
   );
   
   const availableRequests = collectionRequests.filter(
@@ -211,15 +242,73 @@ export function CollectorDashboard() {
     r => r.status === 'picked_up' || r.status === 'received'
   );
 
-  // User conversations
-  const collectorConversations = conversations.filter(
-    c => c.participants.some(p => p.id === collector.id && p.role === 'collector')
-  );
-  const totalUnreadMessages = collectorConversations.reduce((sum, conv) => sum + conv.unreadCount, 0);
+  // 1-on-1 Conversation Logic: Map everything to individuals
+  const visibleRequests = [...myCollections, ...availableRequests];
+  const getIndividualContacts = () => {
+    const contacts: any[] = [];
+    const seenIds = new Set();
 
-  const selectedReq = collectionRequests.find(r => r.id === selectedRequest);
-  const selectedConv = collectorConversations.find(c => c.id === selectedConversation);
-  const conversationMessages = chatMessages.filter(m => m.conversationId === selectedConversation);
+    // 1. Add people from existing conversations
+    conversations.forEach(conv => {
+      const others = (conv.participants || []).filter(
+        (p: any) => String(p.id) !== String(user?.id) && String(p.id) !== String(collector?.id)
+      );
+      others.forEach((p: any) => {
+        if (!seenIds.has(String(p.id))) {
+          contacts.push({
+            id: conv.id,
+            realConvId: conv.id,
+            targetId: String(p.id),
+            displayName: p.name,
+            role: p.role,
+            lastMessage: conv.last_message || "No messages",
+            lastMessageTime: conv.last_message_time || new Date().toISOString(),
+            unreadCount: conv.unread_count || 0,
+            isPotential: false
+          });
+          seenIds.add(String(p.id));
+        }
+      });
+    });
+
+    // 2. Add people from visible requests (who don't have a conversation yet)
+    visibleRequests.forEach(req => {
+      const participants = [
+        { id: String(req.userId), name: req.userName, role: 'user' },
+        req.recyclingCenterId ? { id: String(req.recyclingCenterId), name: req.recyclingCenterName, role: 'recycling_center' } : null
+      ].filter(Boolean);
+
+      participants.forEach(p => {
+        if (p && !seenIds.has(p.id)) {
+          contacts.push({
+            id: `potential-${p.id}`,
+            targetId: p.id,
+            displayName: p.name,
+            role: p.role,
+            relatedRequestId: req.id,
+            lastMessage: "Start a conversation",
+            lastMessageTime: new Date().toISOString(),
+            unreadCount: 0,
+            isPotential: true
+          });
+          seenIds.add(p.id);
+        }
+      });
+    });
+
+    return contacts;
+  };
+
+  const finalSidebarList = getIndividualContacts();
+  const filteredConversations = finalSidebarList.filter(conv =>
+    (conv.displayName || "").toLowerCase().includes((searchQuery || "").toLowerCase()) ||
+    (conv.targetId || "").toLowerCase().includes((searchQuery || "").toLowerCase())
+  );
+  const totalUnreadMessages = conversations.reduce((sum, conv) => sum + (conv.unreadCount || 0), 0);
+
+  const selectedReq = collectionRequests.find(r => String(r.id) === String(selectedRequest));
+  const selectedConv = finalSidebarList.find(c => String(c.id) === String(selectedConversation));
+  const conversationMessages = chatMessages.filter(m => String(m.conversationId) === String(selectedConversation));
   
   // Scroll to bottom of messages
 
@@ -245,7 +334,7 @@ export function CollectorDashboard() {
         await apiRequest(`/collection-requests/${requestId}/`, {
           method: "PATCH",
           body: JSON.stringify({
-            collectorId: collector.id,
+            collectorId: collector?.id,
             status: "assigned",
             assignedAt: new Date().toISOString(),
           }),
@@ -260,7 +349,7 @@ export function CollectorDashboard() {
     setCollectionRequests(prevRequests => 
       prevRequests.map(request => 
         request.id === requestId 
-          ? { ...request, collectorId: collector.id, status: 'assigned' as const, assignedAt: new Date().toISOString() }
+          ? { ...request, collectorId: collector?.id, status: 'assigned' as const, assignedAt: new Date().toISOString() }
           : request
       )
     );
@@ -387,11 +476,49 @@ export function CollectorDashboard() {
     }
   };
 
-  const handleSendMessage = () => {
-    if (newMessage.trim() && selectedConversation) {
-      toast.success('Message sent', {
-        description: 'Your message has been delivered'
+  const handleSendMessage = async () => {
+    if (!newMessage.trim() || !selectedConversation) return;
+
+    let convId = selectedConversation;
+    const isPotential = convId.startsWith('potential-') || convId.startsWith('general-');
+
+    try {
+      if (isPotential) {
+        const potentialConv = selectedConv;
+        const resp = await apiRequest("/conversations/", {
+          method: "POST",
+          body: JSON.stringify({
+            related_request: potentialConv?.relatedRequestId || null,
+            participants: [
+              { id: String(collector?.id || user?.id), name: collector?.name || user?.name, role: 'collector' },
+              { id: String(potentialConv?.targetId), name: potentialConv?.displayName, role: potentialConv?.role }
+            ]
+          })
+        });
+        const realConv = resp as any;
+        convId = realConv.id;
+        setSelectedConversation(convId);
+        // Refresh conversations list
+        const allConvs = await apiRequest("/conversations/");
+        setConversations(allConvs as any[]);
+      }
+
+      await apiRequest("/chat-messages/", {
+        method: "POST",
+        body: JSON.stringify({
+          conversationId: convId,
+          senderId: String(collector?.id || user?.id),
+          senderName: collector?.name || user?.name || "Collector",
+          senderRole: "collector",
+          message: newMessage.trim(),
+          timestamp: new Date().toISOString(),
+          read: false,
+        }),
       });
+      const msgs = await apiRequest(`/chat-messages/?conversationId=${convId}`);
+      setChatMessages(msgs as any[]);
+      await loadConversations();
+      toast.success('Message sent');
       setNewMessage('');
       setShowEmojiPicker(false);
       // Simulate typing indicator
@@ -399,19 +526,17 @@ export function CollectorDashboard() {
       setTimeout(() => setIsTyping(false), 2000);
       // Scroll to bottom
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    } catch (err) {
+      console.error("Failed to send message:", err);
+      toast.error("Failed to send message");
     }
   };
   
   const handleQuickReply = (reply: string) => {
     setNewMessage(reply);
-    // Auto-send quick replies
+    // Auto-send quick replies by calling handleSendMessage
     setTimeout(() => {
-      if (selectedConversation) {
-        toast.success('Quick reply sent');
-        setNewMessage('');
-        setIsTyping(true);
-        setTimeout(() => setIsTyping(false), 2000);
-      }
+      handleSendMessage();
     }, 100);
   };
 
@@ -595,10 +720,7 @@ export function CollectorDashboard() {
     }
   };
   
-  const filteredConversations = collectorConversations.filter(conv =>
-    conv.relatedRequestId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    conv.lastMessage.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+
 
   const totalEarnings = completedCollections.reduce((sum, r) => sum + (r.pickupCharge || 0), 0);
   const todayEarnings = completedCollections.filter(r => {
@@ -1338,7 +1460,7 @@ export function CollectorDashboard() {
                                         ? 'bg-gradient-to-br from-blue-500 to-cyan-600' 
                                         : 'bg-gradient-to-br from-gray-400 to-gray-500'
                                     }`}>
-                                      {conv.relatedRequestId.charAt(0)}
+                                      {(conv.displayName || "U").charAt(0).toUpperCase()}
                                     </div>
                                     {/* Online status */}
                                     <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full" />
@@ -1346,12 +1468,19 @@ export function CollectorDashboard() {
 
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center justify-between mb-1">
-                                      <span className="font-bold text-gray-900 truncate">{conv.relatedRequestId}</span>
+                                      <span className="font-bold text-gray-900 truncate">{conv.displayName}</span>
                                       {conv.unreadCount > 0 && (
                                         <span className="w-6 h-6 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold animate-pulse">
                                           {conv.unreadCount}
                                         </span>
                                       )}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 mb-1">
+                                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase ${
+                                        conv.role === 'recycling_center' ? 'bg-purple-100 text-purple-600' : 'bg-green-100 text-green-600'
+                                      }`}>
+                                        {conv.role === 'recycling_center' ? 'Center' : 'User'}
+                                      </span>
                                     </div>
                                     <p className="text-sm text-gray-600 truncate mb-1">{conv.lastMessage}</p>
                                     <p className="text-xs text-gray-400">{formatMessageTime(conv.lastMessageTime)}</p>
@@ -1375,12 +1504,21 @@ export function CollectorDashboard() {
                             <div className="flex items-center gap-4">
                               <div className="relative">
                                 <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center font-bold text-white text-lg backdrop-blur-sm">
-                                  {selectedConv?.relatedRequestId.charAt(0)}
+                                  {(selectedConv?.displayName || "U").charAt(0).toUpperCase()}
                                 </div>
                                 <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-400 border-2 border-white rounded-full animate-pulse" />
                               </div>
+                                <div>
+                                  <h4 className="font-bold text-white text-lg">{selectedConv?.displayName}</h4>
+                                  <div className="flex gap-2">
+                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                                      selectedConv?.role === 'recycling_center' ? 'bg-purple-400 text-white' : 'bg-green-400 text-white'
+                                    }`}>
+                                      {selectedConv?.role === 'recycling_center' ? 'Center' : 'User'}
+                                    </span>
+                                  </div>
+                                </div>
                               <div>
-                                <h4 className="font-bold text-white text-lg">{selectedConv?.relatedRequestId}</h4>
                                 <p className="text-sm text-blue-100 flex items-center gap-2">
                                   <Circle className="size-2 fill-green-400 text-green-400" />
                                   <span>Active now</span>
@@ -1422,10 +1560,12 @@ export function CollectorDashboard() {
                               style={{ animationDelay: `${index * 50}ms` }}
                             >
                               <div className={`flex items-end gap-2 max-w-md ${msg.senderRole === 'collector' ? 'flex-row-reverse' : ''}`}>
-                                {/* Avatar for user messages */}
+                                {/* Avatar based on role */}
                                 {msg.senderRole !== 'collector' && (
-                                  <div className="w-8 h-8 bg-gradient-to-br from-gray-400 to-gray-500 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-                                    U
+                                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 ${
+                                    msg.senderRole === 'recycling_center' ? 'bg-purple-500' : 'bg-green-500'
+                                  }`}>
+                                    {msg.senderRole === 'recycling_center' ? 'RC' : 'U'}
                                   </div>
                                 )}
                                 
