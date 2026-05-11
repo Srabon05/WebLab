@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from "react";
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { useNavigate } from "react-router";
 import {
   Recycle, LogOut, Plus, Package, Award, History,
@@ -15,7 +17,6 @@ import { formatDistanceToNow } from "date-fns";
 import { getCurrentUser, logout } from "../lib/auth";
 import { apiRequest } from "../lib/api";
 import { 
-  getCategoryLabel,
   getStatusColor,
   getTierColor,
   getTierIcon,
@@ -24,10 +25,31 @@ import {
 import { toast } from "sonner";
 import { Sidebar } from "./Sidebar";
 
+export const getCategoryLabel = (category: string, categories: any[] = []): string => {
+  const config = categories.find(c => c.category === category);
+  if (config) return config.label;
+
+  const labels: Record<string, string> = {
+    computers: 'Computers & Laptops',
+    mobile_devices: 'Mobile Devices',
+    televisions: 'Televisions & Monitors',
+    appliances: 'Small Appliances',
+    batteries: 'Batteries',
+    cables: 'Cables & Accessories',
+    other: 'Other E-Waste',
+  };
+  return labels[category] || category;
+};
+
 export function UserDashboard() {
   const navigate = useNavigate();
   const user = getCurrentUser();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'new' | 'track' | 'rewards' | 'messages' | 'tips' | 'certificates'>('dashboard');
+  
+  const handleLogout = () => {
+    void logout();
+    navigate('/');
+  };
   const [showTrackingModal, setShowTrackingModal] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<string | null>(null);
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
@@ -42,6 +64,8 @@ export function UserDashboard() {
   const [isTyping, setIsTyping] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const notificationDropdownRef = useRef<HTMLDivElement>(null);
 
   // OTP state
   const [receivedOTP, setReceivedOTP] = useState<string | null>(null);
@@ -69,17 +93,25 @@ export function UserDashboard() {
   const [rewardRedemptions, setRewardRedemptions] = useState<any[]>([]);
   const [rewardProfile, setRewardProfile] = useState<any | null>(null);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Filter requests for this user - compute before early return
-  const myRequests = collectionRequests.filter(r => r.userId === user?.id);
+  const myRequests = collectionRequests.filter(r => String(r.userId) === String(user?.id));
   const activeRequests = myRequests.filter(r => 
-    r.status === 'pending' || r.status === 'assigned' || r.status === 'in_progress'
+    ['pending', 'assigned', 'in_progress', 'picked_up', 'received'].includes(r.status)
   );
   const completedRequests = myRequests.filter(r => r.status === 'completed');
+  const pendingRequests = myRequests.filter(r => r.status === 'pending');
 
-  // Calculate reward points
-  const totalRewardPoints = rewardProfile?.totalPoints ?? 0;
-  const pendingPoints = activeRequests.reduce((sum, r) => sum + (r.rewardPoints || 0), 0);
+  const totalEarnedPoints = completedRequests.reduce((sum, r) => sum + (r.rewardPoints || 0), 0);
+  const pendingPoints = activeRequests.reduce((sum, r) => {
+    // Find category config to get the correct reward points
+    const config = categories.find(c => c.category === r.category);
+    const basePoints = config ? config.rewardPoints : 20;
+    const estimatedPoints = r.rewardPoints || (r.quantity ? (basePoints * r.quantity) : basePoints);
+    return sum + estimatedPoints;
+  }, 0);
 
   // User campaigns
   const userCampaigns = campaigns.filter(
@@ -100,7 +132,49 @@ export function UserDashboard() {
   // Auto-scroll to bottom of messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [conversationMessages.length]);
+  }, [chatMessages.length]);
+
+  // Load chat messages
+  useEffect(() => {
+    if (!selectedConversation) return;
+    (async () => {
+      try {
+        const msgs = await apiRequest(`/chat-messages/?conversationId=${selectedConversation}`);
+        setChatMessages(msgs as any[]);
+      } catch {
+        setChatMessages([]);
+      }
+    })();
+  }, [selectedConversation]);
+
+  // Recording timer
+  useEffect(() => {
+    let interval: any;
+    if (isRecording) {
+      interval = setInterval(() => {
+        setRecordingTime((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setRecordingTime(0);
+    }
+    return () => clearInterval(interval);
+  }, [isRecording]);
+
+  // Typing indicator
+  useEffect(() => {
+    if (newMessage.length > 0) {
+      setIsTyping(true);
+      const timeout = setTimeout(() => setIsTyping(false), 1000);
+      return () => clearTimeout(timeout);
+    }
+  }, [newMessage]);
+
+  // Auth check
+  useEffect(() => {
+    if (!user || user.role !== 'user') {
+      navigate('/login');
+    }
+  }, [user, navigate]);
 
   // Load backend data for this user
   useEffect(() => {
@@ -116,6 +190,7 @@ export function UserDashboard() {
           allRedemptions,
           myProfile,
           allLeaderboard,
+          myNotifications,
         ] = await Promise.all([
           apiRequest("/collection-requests/mine/"),
           apiRequest("/campaigns/"),
@@ -125,63 +200,53 @@ export function UserDashboard() {
           apiRequest("/reward-redemptions/"),
           apiRequest("/reward-profile/mine/"),
           apiRequest("/leaderboard/"),
+          apiRequest(`/notifications/?userId=${user.id}`),
         ]);
 
         setCollectionRequests(myReqs as any[]);
         setCampaigns(allCampaigns as any[]);
         setConversations(allConversations as any[]);
         setCategories(allCategories as any[]);
+        if ((allCategories as any[]).length > 0) {
+          setNewRequest(prev => ({ ...prev, category: (allCategories as any[])[0].category }));
+        }
         setRewardTransactions(myTransactions as any[]);
         setRewardRedemptions(allRedemptions as any[]);
         setRewardProfile(myProfile as any);
         setLeaderboard(allLeaderboard as any[]);
-      } catch {
-        // keep UI usable even if backend is down
+        setNotifications(myNotifications as any[]);
+      } catch (error) {
+        console.error("Failed to fetch dashboard data:", error);
+      } finally {
+        setIsLoading(false);
       }
     })();
   }, [user?.id]);
+  
+  // Early return if not authorized
+  if (!user || user.role !== 'user') {
+    return null; // Let useEffect handle navigation
+  }
+
+  // Show loading spinner while fetching data
+  if (isLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-green-500"></div>
+          <p className="text-gray-500 font-medium">Loading your dashboard...</p>
+        </div>
+      </div>
+    );
+  }
 
   // Load messages for selected conversation
-  useEffect(() => {
-    if (!selectedConversation) return;
-    (async () => {
-      try {
-        const msgs = await apiRequest(`/chat-messages/?conversationId=${selectedConversation}`);
-        setChatMessages(msgs as any[]);
-      } catch {
-        setChatMessages([]);
-      }
-    })();
-  }, [selectedConversation]);
 
   // Recording timer
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isRecording) {
-      interval = setInterval(() => {
-        setRecordingTime((prev) => prev + 1);
-      }, 1000);
-    } else {
-      setRecordingTime(0);
-    }
-    return () => clearInterval(interval);
-  }, [isRecording]);
 
   // Simulate typing indicator
-  useEffect(() => {
-    if (newMessage.length > 0) {
-      setIsTyping(true);
-      const timeout = setTimeout(() => setIsTyping(false), 1000);
-      return () => clearTimeout(timeout);
-    }
-  }, [newMessage]);
 
   // Check authentication with useEffect to avoid setState during render
-  useEffect(() => {
-    if (!user || user.role !== 'user') {
-      navigate('/login');
-    }
-  }, [user, navigate]);
 
   const handleEmojiClick = (emojiData: EmojiClickData) => {
     setNewMessage((prev) => prev + emojiData.emoji);
@@ -214,6 +279,18 @@ export function UserDashboard() {
       [messageId]: [...(prev[messageId] || []), emoji],
     }));
     toast.success('Reaction added!');
+  };
+
+  const handleMarkNotificationRead = async (id: string) => {
+    try {
+      await apiRequest(`/notifications/${id}/`, {
+        method: "PATCH",
+        body: JSON.stringify({ read: true }),
+      });
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    } catch {
+      // ignore
+    }
   };
 
   const quickReplies = [
@@ -260,7 +337,7 @@ export function UserDashboard() {
         description: "Your request is saved in the database.",
       });
       setNewRequest({
-        category: "computers",
+        category: categories[0]?.category || "computers",
         items: "",
         quantity: 1,
         estimatedWeight: "",
@@ -282,9 +359,82 @@ export function UserDashboard() {
   };
 
   const handleDownloadCertificate = (requestId: string) => {
-    toast.success('Downloading recycling certificate...', {
+    const request = myRequests.find(r => r.id === requestId);
+    if (!request) {
+      toast.error('Request not found');
+      return;
+    }
+
+    toast.success('Generating recycling certificate...', {
       description: 'Your certificate will be downloaded shortly.'
     });
+
+    const doc = new jsPDF();
+    
+    // Add Header Branding
+    doc.setFillColor(34, 197, 94); // Green-500
+    doc.rect(0, 0, 210, 40, 'F');
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(24);
+    doc.setFont('helvetica', 'bold');
+    doc.text('RECYCLING CERTIFICATE', 105, 25, { align: 'center' });
+    
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text('CERTIFICATE OF SUSTAINABILITY & RESPONSIBLE DISPOSAL', 105, 32, { align: 'center' });
+
+    // Certificate Content
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(14);
+    doc.text(`This is to certify that`, 105, 60, { align: 'center' });
+    
+    doc.setFontSize(22);
+    doc.setFont('helvetica', 'bold');
+    doc.text(user?.name?.toUpperCase() || 'VALUED RECYCLER', 105, 75, { align: 'center' });
+    
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Has successfully contributed to environmental conservation by recycling`, 105, 85, { align: 'center' });
+    doc.text(`electronic waste through our certified green disposal program.`, 105, 92, { align: 'center' });
+
+    // Request Details Table
+    autoTable(doc, {
+      startY: 105,
+      head: [['Field', 'Information']],
+      body: [
+        ['Certificate ID', `#${request.id}`],
+        ['Item Category', getCategoryLabel(request.category, categories)],
+        ['Collection Date', request.completedAt ? new Date(request.completedAt).toLocaleDateString() : 'N/A'],
+        ['Recycling Center', request.recyclingCenterName || 'Certified Local Center'],
+        ['Total Items', `${request.quantity || 1} units`],
+        ['Estimated Impact', 'Reduced Carbon Footprint & Heavy Metal Leaching'],
+        ['Reward Points', `${request.rewardPoints || 0} Points Earned`]
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [21, 128, 61], textColor: [255, 255, 255], fontStyle: 'bold' },
+      styles: { cellPadding: 5, fontSize: 10 },
+      columnStyles: { 0: { fontStyle: 'bold', width: 50 } }
+    });
+
+    // Signature Area
+    const finalY = (doc as any).lastAutoTable.finalY + 30;
+    
+    doc.line(40, finalY, 90, finalY);
+    doc.setFontSize(10);
+    doc.text('Recycling Center Authority', 40, finalY + 5);
+    
+    doc.line(120, finalY, 170, finalY);
+    doc.text('Operations Manager', 120, finalY + 5);
+
+    // Footer
+    doc.setFontSize(8);
+    doc.setTextColor(100, 100, 100);
+    doc.text('EcoCycle: Digital E-Waste Management Platform - Bangladesh', 105, 285, { align: 'center' });
+    doc.text('Verification: www.ecocycle.com/verify-certificate', 105, 290, { align: 'center' });
+
+    // Download
+    doc.save(`Recycling_Certificate_${request.id}.pdf`);
   };
 
   const handleSendMessage = () => {
@@ -334,8 +484,8 @@ export function UserDashboard() {
     },
     {
       icon: Award,
-      label: 'Total Points',
-      value: totalRewardPoints.toString(),
+      label: 'Total Earned',
+      value: totalEarnedPoints.toLocaleString(),
       color: 'from-purple-500 to-purple-600',
       bgLight: 'bg-purple-50',
       textColor: 'text-purple-600',
@@ -363,7 +513,7 @@ export function UserDashboard() {
   return (
     <div className="flex h-screen bg-gradient-to-br from-gray-50 to-blue-50/30 overflow-hidden">
       <Sidebar
-        user={user}
+        user={{ name: user?.name || 'User', email: user?.email || '', role: user?.role || 'user' }}
         menuItems={sidebarMenuItems}
         activeTab={activeTab}
         onTabChange={(tab) => setActiveTab(tab as any)}
@@ -393,10 +543,64 @@ export function UserDashboard() {
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                <button className="relative p-2 hover:bg-gray-100 rounded-lg transition-colors">
-                  <Bell className="size-5 text-gray-600" />
-                  <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                </button>
+                <div className="relative" ref={notificationDropdownRef}>
+                  <button 
+                    onClick={() => setShowNotifications(!showNotifications)}
+                    className="relative p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                  >
+                    <Bell className="size-5 text-gray-600" />
+                    {notifications.filter(n => !n.read).length > 0 && (
+                      <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                    )}
+                  </button>
+
+                  {showNotifications && (
+                    <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-gray-100 z-50 overflow-hidden animate-scale-in">
+                      <div className="p-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white flex items-center justify-between">
+                        <h4 className="font-bold">Notifications</h4>
+                        <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">
+                          {notifications.filter(n => !n.read).length} New
+                        </span>
+                      </div>
+                      <div className="max-h-[400px] overflow-y-auto">
+                        {notifications.length === 0 ? (
+                          <div className="p-8 text-center text-gray-500">
+                            <Bell className="size-8 mx-auto mb-2 opacity-20" />
+                            <p className="text-sm">No notifications yet</p>
+                          </div>
+                        ) : (
+                          notifications.map((n) => (
+                            <button
+                              key={n.id}
+                              onClick={() => {
+                                handleMarkNotificationRead(n.id);
+                                if (n.type === 'otp') {
+                                  toast.info(n.message, { duration: 10000 });
+                                }
+                              }}
+                              className={`w-full text-left p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors ${!n.read ? 'bg-green-50/50' : ''}`}
+                            >
+                              <div className="flex gap-3">
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
+                                  n.type === 'otp' ? 'bg-yellow-100 text-yellow-600' : 'bg-blue-100 text-blue-600'
+                                }`}>
+                                  {n.type === 'otp' ? <ShieldCheck className="size-5" /> : <Bell className="size-5" />}
+                                </div>
+                                <div>
+                                  <p className="text-sm font-bold text-gray-900">{n.title}</p>
+                                  <p className="text-xs text-gray-600 line-clamp-2">{n.message}</p>
+                                  <p className="text-[10px] text-gray-400 mt-1">
+                                    {formatDistanceToNow(new Date(n.createdAt), { addSuffix: true })}
+                                  </p>
+                                </div>
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -413,7 +617,7 @@ export function UserDashboard() {
                 return (
                   <div 
                     key={index} 
-                    className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all p-6 border border-gray-100 card-hover group animate-stagger-${index + 1}"
+                    className={`bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all p-6 border border-gray-100 card-hover group animate-stagger-${index + 1}`}
                   >
                     <div className="flex items-center justify-between mb-4">
                       <div className={`${stat.bgLight} p-3 rounded-xl group-hover:scale-110 transition-transform`}>
@@ -460,7 +664,7 @@ export function UserDashboard() {
               >
                 <div className="text-left">
                   <p className="text-purple-100 text-sm mb-1">Your Rewards</p>
-                  <p className="font-bold text-lg">{totalRewardPoints} Points</p>
+                  <p className="font-bold text-lg">{totalEarnedPoints} Points</p>
                 </div>
                 <Trophy className="size-8 opacity-75 group-hover:rotate-12 transition-transform" />
               </button>
@@ -473,6 +677,62 @@ export function UserDashboard() {
             {/* Dashboard Tab */}
             {activeTab === 'dashboard' && (
               <div className="animate-slide-in-up">
+                {/* Pending Requests Highlight Dashboard */}
+                {pendingRequests.length > 0 && (
+                  <div className="mb-8 p-8 bg-gradient-to-br from-orange-500 via-amber-600 to-orange-700 rounded-[2rem] text-white shadow-2xl relative overflow-hidden group">
+                    {/* Dynamic Background Elements */}
+                    <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-20 -mt-20 blur-3xl group-hover:scale-110 transition-transform duration-700"></div>
+                    <div className="absolute bottom-0 left-0 w-48 h-48 bg-black/10 rounded-full -ml-10 -mb-10 blur-2xl"></div>
+                    <Package className="absolute -right-6 -bottom-6 size-48 text-white/5 rotate-12 group-hover:rotate-0 transition-transform duration-500" />
+                    
+                    <div className="relative z-10">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-4">
+                            <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center ring-2 ring-white/30 shadow-inner">
+                              <Clock className="size-7 text-white animate-pulse" />
+                            </div>
+                            <div>
+                              <h4 className="text-2xl font-black tracking-tight">Active Pending Pickups</h4>
+                              <p className="text-orange-100/80 font-medium">Your requests are in queue for processing</p>
+                            </div>
+                          </div>
+                          
+                          <div className="flex flex-wrap gap-4 mt-6">
+                            {pendingRequests.slice(0, 3).map(req => (
+                              <div key={req.id} className="bg-white/10 backdrop-blur-xl px-5 py-3 rounded-2xl border border-white/20 shadow-lg hover:bg-white/20 transition-all cursor-default">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <div className="size-2 bg-orange-300 rounded-full animate-ping"></div>
+                                  <p className="text-[10px] font-black uppercase tracking-widest text-orange-200">ID: {req.id}</p>
+                                </div>
+                                <p className="text-sm font-bold">{getCategoryLabel(req.category, categories)}</p>
+                              </div>
+                            ))}
+                            {pendingRequests.length > 3 && (
+                              <div className="bg-white/10 backdrop-blur-xl px-5 py-3 rounded-2xl border border-white/20 flex items-center group/more cursor-pointer hover:bg-white/20 transition-all">
+                                <p className="text-sm font-black">+{pendingRequests.length - 3} More</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        
+                        <div className="flex flex-col items-center md:items-end gap-3 shrink-0">
+                          <div className="text-center md:text-right mb-2">
+                            <p className="text-4xl font-black">{pendingRequests.length}</p>
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-orange-200">Requests Waiting</p>
+                          </div>
+                          <button 
+                            onClick={() => setActiveTab('track')}
+                            className="group/btn px-8 py-4 bg-white text-orange-600 rounded-2xl font-black shadow-[0_10px_20px_rgba(0,0,0,0.15)] hover:shadow-[0_15px_30px_rgba(0,0,0,0.2)] hover:-translate-y-1 active:translate-y-0 transition-all flex items-center gap-3"
+                          >
+                            <span>Track All Progress</span>
+                            <ArrowRight className="size-5 group-hover/btn:translate-x-1 transition-transform" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-2xl font-bold text-gray-900">My Collection Requests</h3>
                   <div className="flex gap-2">
@@ -524,7 +784,7 @@ export function UserDashboard() {
                             </div>
                             <div className="flex items-center gap-2 text-gray-700">
                               <Package className="size-4" />
-                              <p className="font-semibold">{getCategoryLabel(request.category)}</p>
+                              <p className="font-semibold">{getCategoryLabel(request.category, categories)}</p>
                             </div>
                           </div>
                           <div className="flex gap-2">
@@ -635,7 +895,7 @@ export function UserDashboard() {
                             required
                           >
                             {categories.map((cat: any) => (
-                              <option key={cat.id} value={cat.id}>{cat.label}</option>
+                              <option key={cat.id} value={cat.category}>{cat.label}</option>
                             ))}
                           </select>
                         </div>
@@ -796,7 +1056,7 @@ export function UserDashboard() {
                         <div className="space-y-3 mb-4">
                           <div className="flex items-center gap-3">
                             <Package className="size-5 text-gray-400" />
-                            <span className="text-gray-700">{getCategoryLabel(request.category)}</span>
+                            <span className="text-gray-700">{getCategoryLabel(request.category, categories)}</span>
                           </div>
                           {request.scheduledDate && (
                             <div className="flex items-center gap-3">
@@ -989,7 +1249,7 @@ export function UserDashboard() {
                               <CheckCircle className="size-5 text-green-600" />
                               <h4 className="font-bold text-gray-900">{request.id}</h4>
                             </div>
-                            <p className="text-sm text-gray-600">{getCategoryLabel(request.category)}</p>
+                            <p className="text-sm text-gray-600">{getCategoryLabel(request.category, categories)}</p>
                           </div>
                           <div className="w-16 h-16 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center">
                             <FileCheck className="size-8 text-white" />
@@ -1404,7 +1664,7 @@ export function UserDashboard() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <p className="text-sm text-gray-600 mb-1">Category</p>
-                    <p className="font-semibold text-gray-900">{getCategoryLabel(selectedReq.category)}</p>
+                    <p className="font-semibold text-gray-900">{getCategoryLabel(selectedReq.category, categories)}</p>
                   </div>
                   <div>
                     <p className="text-sm text-gray-600 mb-1">Status</p>

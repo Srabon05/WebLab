@@ -288,7 +288,7 @@ class UserRewardProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserRewardProfile
-        fields = ("id", "userId", "totalPoints", "lifetimePoints", "redeemedPoints", "tier", "rank")
+        fields = ("userId", "totalPoints", "lifetimePoints", "redeemedPoints", "tier", "rank")
 
 
 class LeaderboardEntrySerializer(serializers.ModelSerializer):

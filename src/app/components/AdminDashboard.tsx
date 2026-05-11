@@ -75,6 +75,7 @@ export function AdminDashboard() {
   // State for categories
   const [categories, setCategories] = useState<any[]>([]);
   
+  // State for reward rules
   const [rewardRules, setRewardRules] = useState<any[]>([]);
   const [showRewardModal, setShowRewardModal] = useState(false);
   const [editingRewardRule, setEditingRewardRule] = useState<any | null>(null);
@@ -86,19 +87,6 @@ export function AdminDashboard() {
     bonusPoints: 0,
   });
   
-  const [rewardSubTab, setRewardSubTab] = useState<'rules' | 'catalog' | 'userPoints'>('rules');
-  const [usersWithPoints, setUsersWithPoints] = useState<any[]>([]);
-  const [rewardRedemptions, setRewardRedemptions] = useState<any[]>([]);
-  const [showRedemptionModal, setShowRedemptionModal] = useState(false);
-  const [editingRedemption, setEditingRedemption] = useState<any | null>(null);
-  const [redemptionForm, setRedemptionForm] = useState({
-    name: '',
-    description: '',
-    pointsRequired: 100,
-    category: 'voucher',
-    icon: '🎁',
-  });
-
   // State for campaigns
   const [campaigns, setCampaigns] = useState<any[]>([]);
 
@@ -111,7 +99,7 @@ export function AdminDashboard() {
     if (!user) return;
     (async () => {
       try {
-        const [users, reqs, centers, cols, cats, rules, camps, redemptions] = await Promise.all([
+        const [users, reqs, centers, cols, cats, rules, camps] = await Promise.all([
           apiRequest("/users/"),
           apiRequest("/collection-requests/"),
           apiRequest("/recycling-centers/"),
@@ -119,7 +107,6 @@ export function AdminDashboard() {
           apiRequest("/categories/"),
           apiRequest("/reward-rules/"),
           apiRequest("/campaigns/"),
-          apiRequest("/reward-redemptions/"),
         ]);
 
         const userList = users as any[];
@@ -150,10 +137,6 @@ export function AdminDashboard() {
         setCategories(cats as any[]);
         setRewardRules(rules as any[]);
         setCampaigns(camps as any[]);
-        setRewardRedemptions(redemptions as any[]);
-
-        const usersPoints = await apiRequest("/users/with_points/");
-        setUsersWithPoints(usersPoints as any[]);
       } catch (error) {
         console.error("Failed to fetch dashboard data:", error);
       } finally {
@@ -518,94 +501,6 @@ export function AdminDashboard() {
       } finally {
         setShowRewardModal(false);
         setEditingRewardRule(null);
-      }
-    })();
-  };
-
-  const handleAwardPoints = (profileId: string, userName: string) => {
-    const pointsStr = prompt(`How many bonus points to award to ${userName}?`, "100");
-    if (!pointsStr) return;
-    const points = parseInt(pointsStr);
-    if (isNaN(points)) return;
-
-    (async () => {
-      try {
-        await apiRequest(`/reward-profile/${profileId}/award_points/`, {
-          method: "POST",
-          body: JSON.stringify({ points, reason: "Admin Manual Award" })
-        });
-        toast.success(`Awarded ${points} points to ${userName}`);
-        // Refresh users with points
-        const updated = await apiRequest("/users/with_points/");
-        setUsersWithPoints(updated as any[]);
-      } catch {
-        toast.error("Failed to award points");
-      }
-    })();
-  };
-
-  // Redemption Management
-  const handleAddRedemption = () => {
-    setEditingRedemption(null);
-    setRedemptionForm({ name: '', description: '', pointsRequired: 100, category: 'voucher', icon: '🎁' });
-    setShowRedemptionModal(true);
-  };
-
-  const handleEditRedemption = (redemption: any) => {
-    setEditingRedemption(redemption);
-    setRedemptionForm({
-      name: redemption.name,
-      description: redemption.description,
-      pointsRequired: redemption.pointsRequired || redemption.points_required,
-      category: redemption.category,
-      icon: redemption.icon,
-    });
-    setShowRedemptionModal(true);
-  };
-
-  const handleDeleteRedemption = (id: string, name: string) => {
-    (async () => {
-      try {
-        await apiRequest(`/reward-redemptions/${id}/`, { method: "DELETE" });
-        setRewardRedemptions(prev => prev.filter(r => r.id !== id));
-        toast.success(`Redemption "${name}" deleted`);
-      } catch {
-        toast.error("Failed to delete redemption");
-      }
-    })();
-  };
-
-  const handleSaveRedemptionForm = (e: React.FormEvent) => {
-    e.preventDefault();
-    (async () => {
-      try {
-        const payload = {
-          name: redemptionForm.name,
-          description: redemptionForm.description,
-          pointsRequired: redemptionForm.pointsRequired,
-          category: redemptionForm.category,
-          icon: redemptionForm.icon,
-        };
-
-        if (editingRedemption) {
-          const updated = await apiRequest(`/reward-redemptions/${editingRedemption.id}/`, {
-            method: "PATCH",
-            body: JSON.stringify(payload)
-          });
-          setRewardRedemptions(prev => prev.map(r => r.id === editingRedemption.id ? updated : r));
-          toast.success("Redemption updated!");
-        } else {
-          const created = await apiRequest("/reward-redemptions/", {
-            method: "POST",
-            body: JSON.stringify(payload)
-          });
-          setRewardRedemptions(prev => [...prev, created]);
-          toast.success("Redemption created!");
-        }
-      } catch {
-        toast.error("Failed to save redemption");
-      } finally {
-        setShowRedemptionModal(false);
       }
     })();
   };
@@ -1301,21 +1196,10 @@ export function AdminDashboard() {
                         </div>
                       </div>
 
-                      <div className="space-y-3 mb-4">
-                        <div className="bg-blue-50 rounded-xl p-4">
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm font-medium text-gray-700">Role</span>
-                            <span className="text-lg font-bold text-blue-600 capitalize">{userItem.role}</span>
-                          </div>
-                        </div>
-                        
-                        <div className="bg-purple-50 rounded-xl p-4">
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm font-medium text-gray-700">Reward Points</span>
-                            <span className="text-lg font-bold text-purple-600">
-                              {userItem.totalPoints ?? 0}
-                            </span>
-                          </div>
+                      <div className="bg-blue-50 rounded-xl p-4 mb-4">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-gray-700">Role</span>
+                          <span className="text-2xl font-bold text-blue-600 capitalize">{userItem.role}</span>
                         </div>
                       </div>
 
@@ -1398,201 +1282,64 @@ export function AdminDashboard() {
             {/* Rewards Tab */}
             {activeTab === 'rewards' && (
               <div className="animate-slide-in-up">
-                {/* Reward Sub-tabs */}
-                <div className="flex items-center gap-4 mb-8 bg-white p-2 rounded-2xl shadow-sm border border-gray-100 overflow-x-auto">
+                <div className="flex items-center justify-between mb-8">
+                  <div>
+                    <h3 className="text-3xl font-bold text-gray-900 mb-2">Reward Rules</h3>
+                    <p className="text-gray-600">Configure point multipliers and bonuses</p>
+                  </div>
                   <button
-                    onClick={() => setRewardSubTab('rules')}
-                    className={`px-6 py-3 rounded-xl font-bold transition-all whitespace-nowrap ${
-                      rewardSubTab === 'rules'
-                        ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg'
-                        : 'text-gray-600 hover:bg-gray-50'
-                    }`}
+                    onClick={handleAddRewardRule}
+                    className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl hover:shadow-lg hover:scale-105 active:scale-95 transition-all font-medium"
                   >
-                    Reward Rules
-                  </button>
-                  <button
-                    onClick={() => setRewardSubTab('catalog')}
-                    className={`px-6 py-3 rounded-xl font-bold transition-all whitespace-nowrap ${
-                      rewardSubTab === 'catalog'
-                        ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg'
-                        : 'text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >
-                    Redemption Catalog
-                  </button>
-                  <button
-                    onClick={() => setRewardSubTab('userPoints')}
-                    className={`px-6 py-3 rounded-xl font-bold transition-all whitespace-nowrap ${
-                      rewardSubTab === 'userPoints'
-                        ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg'
-                        : 'text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >
-                    User Points & Activity
+                    <Plus className="size-5" />
+                    Add Reward Rule
                   </button>
                 </div>
 
-                {rewardSubTab === 'rules' ? (
-                  <>
-                    <div className="flex items-center justify-between mb-8">
-                      <div>
-                        <h3 className="text-3xl font-bold text-gray-900 mb-2">Reward Rules</h3>
-                        <p className="text-gray-600">Configure point multipliers and bonuses</p>
-                      </div>
-                      <button
-                        onClick={handleAddRewardRule}
-                        className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl hover:shadow-lg hover:scale-105 active:scale-95 transition-all font-medium"
-                      >
-                        <Plus className="size-5" />
-                        Add Reward Rule
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                      {rewardRules.map((rule) => (
-                        <div key={rule.id} className="bg-white rounded-2xl border-2 border-gray-100 p-6 hover:border-purple-300 hover:shadow-lg transition-all">
-                          <div className="flex items-center gap-3 mb-4">
-                            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-xl flex items-center justify-center">
-                              <Award className="size-6 text-white" />
-                            </div>
-                            <div>
-                              <h4 className="font-bold text-gray-900">{rule.name}</h4>
-                              <p className="text-xs text-gray-600">{rule.condition}</p>
-                            </div>
-                          </div>
-
-                          <div className="bg-purple-50 rounded-xl p-4 mb-4">
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-sm text-gray-700">Multiplier</span>
-                              <span className="text-xl font-bold text-purple-600">×{rule.multiplier}</span>
-                            </div>
-                            {rule.bonusPoints && (
-                              <div className="flex items-center justify-between pt-2 border-t border-purple-200">
-                                <span className="text-sm text-gray-700">Bonus</span>
-                                <span className="text-xl font-bold text-purple-600">+{rule.bonusPoints}</span>
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => handleEditRewardRule(rule)}
-                              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-xl hover:bg-purple-200 transition-colors font-medium"
-                            >
-                              <Edit className="size-4" />
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => handleDeleteRewardRule(rule.id, rule.name)}
-                              className="flex items-center justify-center px-4 py-2 bg-red-100 text-red-700 rounded-xl hover:bg-red-200 transition-colors"
-                            >
-                              <Trash2 className="size-4" />
-                            </button>
-                          </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {rewardRules.map((rule) => (
+                    <div key={rule.id} className="bg-white rounded-2xl border-2 border-gray-100 p-6 hover:border-purple-300 hover:shadow-lg transition-all">
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-xl flex items-center justify-center">
+                          <Award className="size-6 text-white" />
                         </div>
-                      ))}
-                    </div>
-                  </>
-                ) : rewardSubTab === 'catalog' ? (
-                  <>
-                    <div className="flex items-center justify-between mb-8">
-                      <div>
-                        <h3 className="text-3xl font-bold text-gray-900 mb-2">Redemption Catalog</h3>
-                        <p className="text-gray-600">Manage items users can redeem with points</p>
-                      </div>
-                      <button
-                        onClick={handleAddRedemption}
-                        className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl hover:shadow-lg hover:scale-105 active:scale-95 transition-all font-medium"
-                      >
-                        <Plus className="size-5" />
-                        Add Item
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                      {rewardRedemptions.map((item) => (
-                        <div key={item.id} className="bg-white rounded-2xl border-2 border-gray-100 p-6 hover:border-purple-300 hover:shadow-lg transition-all">
-                          <div className="flex items-start justify-between mb-4">
-                            <div className="text-4xl">{item.icon}</div>
-                            <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-bold">
-                              {item.pointsRequired || item.points_required} PTS
-                            </span>
-                          </div>
-                          <h4 className="font-bold text-gray-900 mb-1">{item.name}</h4>
-                          <p className="text-sm text-gray-600 mb-4 line-clamp-2">{item.description}</p>
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => handleEditRedemption(item)}
-                              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-xl hover:bg-purple-200 transition-colors font-medium"
-                            >
-                              <Edit className="size-4" />
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => handleDeleteRedemption(item.id, item.name)}
-                              className="flex items-center justify-center px-4 py-2 bg-red-100 text-red-700 rounded-xl hover:bg-red-200 transition-colors"
-                            >
-                              <Trash2 className="size-4" />
-                            </button>
-                          </div>
+                        <div>
+                          <h4 className="font-bold text-gray-900">{rule.name}</h4>
+                          <p className="text-xs text-gray-600">{rule.condition}</p>
                         </div>
-                      ))}
+                      </div>
+
+                      <div className="bg-purple-50 rounded-xl p-4 mb-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm text-gray-700">Multiplier</span>
+                          <span className="text-xl font-bold text-purple-600">×{rule.multiplier}</span>
+                        </div>
+                        {rule.bonusPoints && (
+                          <div className="flex items-center justify-between pt-2 border-t border-purple-200">
+                            <span className="text-sm text-gray-700">Bonus</span>
+                            <span className="text-xl font-bold text-purple-600">+{rule.bonusPoints}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleEditRewardRule(rule)}
+                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-xl hover:bg-purple-200 transition-colors font-medium"
+                        >
+                          <Edit className="size-4" />
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDeleteRewardRule(rule.id, rule.name)}
+                          className="flex items-center justify-center px-4 py-2 bg-red-100 text-red-700 rounded-xl hover:bg-red-200 transition-colors"
+                        >
+                          <Trash2 className="size-4" />
+                        </button>
+                      </div>
                     </div>
-                  </>
-                ) : (
-                  <div className="bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse">
-                        <thead className="bg-gray-50 border-b border-gray-100">
-                          <tr>
-                            <th className="px-6 py-4 text-sm font-bold text-gray-700">User</th>
-                            <th className="px-6 py-4 text-sm font-bold text-gray-700">Available Points</th>
-                            <th className="px-6 py-4 text-sm font-bold text-gray-700">Lifetime Earned</th>
-                            <th className="px-6 py-4 text-sm font-bold text-gray-700">Total Redeemed</th>
-                            <th className="px-6 py-4 text-sm font-bold text-gray-700">Tier</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-50">
-                          {usersWithPoints.map((u: any) => (
-                            <tr key={u.id} className="hover:bg-gray-50 transition-colors">
-                              <td className="px-6 py-4">
-                                <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center text-purple-600 font-bold">
-                                    {u.name[0]}
-                                  </div>
-                                  <div>
-                                    <p className="font-bold text-gray-900">{u.name}</p>
-                                    <p className="text-xs text-gray-500">{u.email}</p>
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="px-6 py-4">
-                                <span className="text-lg font-black text-purple-600">
-                                  {u.reward_profile?.totalPoints ?? 0}
-                                </span>
-                              </td>
-                              <td className="px-6 py-4 font-medium text-gray-700">
-                                {u.reward_profile?.lifetimePoints ?? 0}
-                              </td>
-                              <td className="px-6 py-4 font-medium text-gray-700">
-                                {u.reward_profile?.redeemedPoints ?? 0}
-                              </td>
-                              <td className="px-6 py-4">
-                                <button
-                                  onClick={() => u.reward_profile && handleAwardPoints(u.reward_profile.id, u.name)}
-                                  className="flex items-center gap-2 px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors text-xs font-bold"
-                                >
-                                  <Plus className="size-3" />
-                                  Award
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
+                  ))}
+                </div>
               </div>
             )}
 
@@ -2252,79 +1999,6 @@ export function AdminDashboard() {
                   onClick={() => setShowCampaignModal(false)}
                   className="px-8 py-4 border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-all font-bold"
                 >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Reward Redemption Modal */}
-      {showRedemptionModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl animate-scale-in">
-            <div className="sticky top-0 bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-6 rounded-t-3xl">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-2xl font-bold mb-1">
-                    {editingRedemption ? 'Edit Reward' : 'Add New Reward'}
-                  </h3>
-                  <p className="text-purple-100">Manage items in the redemption catalog</p>
-                </div>
-                <button onClick={() => setShowRedemptionModal(false)} className="text-white hover:bg-white/20 p-2 rounded-full">
-                  <X className="size-6" />
-                </button>
-              </div>
-            </div>
-            <form onSubmit={handleSaveRedemptionForm} className="p-6 space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Item Name</label>
-                  <input
-                    type="text"
-                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 transition-all"
-                    value={redemptionForm.name}
-                    onChange={(e) => setRedemptionForm({ ...redemptionForm, name: e.target.value })}
-                    required
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Description</label>
-                  <textarea
-                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 transition-all"
-                    rows={3}
-                    value={redemptionForm.description}
-                    onChange={(e) => setRedemptionForm({ ...redemptionForm, description: e.target.value })}
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Points Required</label>
-                  <input
-                    type="number"
-                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 transition-all"
-                    value={redemptionForm.pointsRequired}
-                    onChange={(e) => setRedemptionForm({ ...redemptionForm, pointsRequired: parseInt(e.target.value) || 0 })}
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Icon (Emoji)</label>
-                  <input
-                    type="text"
-                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 transition-all"
-                    value={redemptionForm.icon}
-                    onChange={(e) => setRedemptionForm({ ...redemptionForm, icon: e.target.value })}
-                    required
-                  />
-                </div>
-              </div>
-              <div className="flex gap-4">
-                <button type="submit" className="flex-1 bg-purple-600 text-white py-4 rounded-xl font-bold hover:bg-purple-700">
-                  {editingRedemption ? 'Update Reward' : 'Create Reward'}
-                </button>
-                <button type="button" onClick={() => setShowRedemptionModal(false)} className="px-8 py-4 border-2 border-gray-300 rounded-xl text-gray-700 font-bold">
                   Cancel
                 </button>
               </div>

@@ -138,17 +138,6 @@ class UsersViewSet(viewsets.ModelViewSet):
             elif instance.role == "collector":
                 Collector.objects.filter(email=instance.email).update(approval_status=instance.approval_status)
 
-    @action(detail=False, methods=["GET"], permission_classes=[permissions.IsAdminUser])
-    def with_points(self, request):
-        users = self.get_queryset().filter(role="user")
-        data = []
-        for u in users:
-            profile, _ = UserRewardProfile.objects.get_or_create(user=u)
-            user_data = UserSerializer(u).data
-            user_data["reward_profile"] = UserRewardProfileSerializer(profile).data
-            data.append(user_data)
-        return Response(data)
-
 
 class RecyclingCenterViewSet(viewsets.ModelViewSet):
     queryset = RecyclingCenter.objects.all().order_by("id")
@@ -278,46 +267,6 @@ class RewardRedemptionViewSet(viewsets.ModelViewSet):
     queryset = RewardRedemption.objects.all().order_by("points_required")
     serializer_class = RewardRedemptionSerializer
 
-    @action(detail=True, methods=["POST"])
-    def redeem(self, request, pk=None):
-        try:
-            redemption = self.get_object()
-            user = request.user
-            profile, _ = UserRewardProfile.objects.get_or_create(user=user)
-
-            if profile.total_points < redemption.points_required:
-                return Response({
-                    "detail": "Not enough points",
-                    "required": redemption.points_required,
-                    "available": profile.total_points
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Process redemption
-            profile.total_points -= redemption.points_required
-            profile.redeemed_points += redemption.points_required
-            profile.save()
-
-            # Update User model total_points as well
-            user.total_points = profile.total_points
-            user.save()
-
-            # Create Reward Transaction
-            transaction = RewardTransaction.objects.create(
-                user=user,
-                type="redeemed",
-                points=redemption.points_required,
-                description=f"Redeemed: {redemption.name}",
-                balance=profile.total_points
-            )
-
-            return Response({
-                "message": f"Successfully redeemed {redemption.name}",
-                "profile": UserRewardProfileSerializer(profile).data,
-                "transaction": RewardTransactionSerializer(transaction).data
-            })
-        except Exception as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
 
 class UserRewardProfileViewSet(viewsets.ModelViewSet):
     queryset = UserRewardProfile.objects.select_related("user").all()
@@ -325,72 +274,6 @@ class UserRewardProfileViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["GET"])
     def mine(self, request):
-        profile, _ = UserRewardProfile.objects.get_or_create(user=request.user)
-        return Response(self.get_serializer(profile).data)
-
-    @action(detail=True, methods=["POST"], permission_classes=[permissions.IsAdminUser])
-    def award_points(self, request, pk=None):
-        profile = self.get_object()
-        points = request.data.get("points", 0)
-        reason = request.data.get("reason", "Admin Award")
-
-        try:
-            points = int(points)
-        except ValueError:
-            return Response({"detail": "Invalid points value"}, status=status.HTTP_400_BAD_REQUEST)
-
-        profile.total_points += points
-        profile.lifetime_points += points
-        profile.save()
-
-        # Update User model as well
-        user = profile.user
-        user.total_points = profile.total_points
-        user.save()
-
-        # Create Reward Transaction
-        transaction = RewardTransaction.objects.create(
-            user=user,
-            type="bonus",
-            points=points,
-            description=reason,
-            balance=profile.total_points
-        )
-
-        return Response({
-            "message": f"Successfully awarded {points} points",
-            "profile": self.get_serializer(profile).data,
-            "transaction": RewardTransactionSerializer(transaction).data
-        })
-
-    @action(detail=False, methods=["POST"])
-    def demo_points(self, request):
-        profile, _ = UserRewardProfile.objects.get_or_create(user=request.user)
-        points = 500
-        profile.total_points += points
-        profile.lifetime_points += points
-        profile.save()
-
-        user = profile.user
-        user.total_points = profile.total_points
-        user.save()
-
-        transaction = RewardTransaction.objects.create(
-            user=user,
-            type="bonus",
-            points=points,
-            description="Demo Bonus Points",
-            balance=profile.total_points
-        )
-
-        return Response({
-            "message": "Awarded 500 demo points!",
-            "profile": self.get_serializer(profile).data,
-            "transaction": RewardTransactionSerializer(transaction).data
-        })
-
-    @action(detail=False, methods=["GET"])
-    def mine_sync(self, request):
         obj, _ = UserRewardProfile.objects.get_or_create(user=request.user)
         
         # Sync points if they appear out of date (e.g. for older accounts)
